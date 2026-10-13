@@ -85,13 +85,23 @@ def pack_tar(path, row):
             for f in sorted(files):
                 p = os.path.join(d, f)
                 rel = os.path.relpath(p, src)
-                st = os.lstat(p)
-                if not stat.S_ISREG(st.st_mode):
+                # opened without following a link and judged by what was opened, so a file swapped for a link
+                # between the look and the read cannot send some other file of this machine to a device
+                try:
+                    fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+                except OSError:
                     return None, 'the pack holds something that is not a plain file'
-                n, total = n + 1, total + st.st_size
-                if n > MAX_PACK_FILES or total > MAX_PACK:
+                with os.fdopen(fd, 'rb') as fh:
+                    st = os.fstat(fh.fileno())
+                    if not stat.S_ISREG(st.st_mode) or os.path.realpath(p) != os.path.join(os.path.realpath(d), f) \
+                            or not os.path.realpath(d).startswith(src):
+                        return None, 'the pack holds something that is not a plain file'
+                    n, total = n + 1, total + st.st_size
+                    if n > MAX_PACK_FILES or total > MAX_PACK:
+                        return None, 'the pack is over 2000 files or 20 MB'
+                    body = fh.read(MAX_PACK + 1)
+                if len(body) > MAX_PACK:
                     return None, 'the pack is over 2000 files or 20 MB'
-                body = open(p, 'rb').read()
                 try:
                     if b'\0' in body:
                         raise ValueError
@@ -153,6 +163,12 @@ def main():
         if not top or top.returncode != 0 or os.path.realpath(top.stdout.strip()) != src or not re.fullmatch(r'[0-9a-f]{40}', commit):
             print('that folder is not the top of a git worktree with a commit')
             return 2
+        # .memory/ is where a chat is told its owner's memory lies. Work that carries its own folder of that name would
+        # be read as memory, so it is refused: only a pack this program lays may be there.
+        own = subprocess.run(git + ['ls-tree', '-r', '--name-only', commit, '--', '.memory'], capture_output=True, text=True, timeout=30)
+        if own.returncode != 0 or own.stdout.strip():
+            print('the work itself holds a .memory folder; that name is kept for the memory pack')
+            return 2
         pack = None
         if len(args) == 3:
             pack, why = pack_tar(args[2], row)
@@ -184,12 +200,14 @@ def main():
                         pass
                 t = threading.Thread(target=pump, daemon=True)
                 t.start()
-                try:
-                    out = p.stdout.read()
-                    p.wait(timeout=180)
-                except subprocess.TimeoutExpired:
-                    p.kill()
-                    raise
+                late = threading.Timer(180, p.kill)  # the read below would wait for ever on a device that hangs
+                late.start()
+                out = p.stdout.read(1 << 20)
+                p.wait()
+                hung = not late.is_alive()
+                late.cancel()
+                if hung:
+                    raise subprocess.TimeoutExpired(cmd, 180)
                 r = subprocess.CompletedProcess(cmd, p.returncode, out, b'')
             feed.stdout.close()
             if feed.wait(timeout=10) != 0 and r.returncode == 0:

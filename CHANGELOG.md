@@ -3,6 +3,14 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.8.1 (2026-10-13)
+
+Found by review of 0.8.0.
+
+- Work that carries its own `.memory/` folder is refused, so a commit cannot plant "memory" for the next chat.
+- A pack file is opened without following a link and judged by what was opened.
+- A seed with a pack has a working time limit.
+
 ## 0.8.0 (2026-10-13)
 
 - `seed` takes an optional pack: a plain folder of text files laid read-only at `.memory/` in the seat folder, in place before the chat starts and never reported by `fetch`. Text only, no links, 2,000 files, 20 MB.
