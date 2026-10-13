@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""kimera-memory-forward DEVICE: keep the memory road open. The device's 127.0.0.1:<memory_port> is forwarded to the
+memory's device door on Tilki's loopback (the door itself never listens anywhere else). Started from Tilki, with a
+key that may do nothing on the device but hold that one listening port. The door asks every request for the device's
+own token, so the forward alone opens nothing. Runs under kimera-memory-forward@DEVICE.service."""
+import json, os, re, sys
+conf = os.environ.get('KIMERA_DEVICES', os.path.expanduser('~/.config/kimera/devices.json'))
+dev = sys.argv[1] if len(sys.argv) == 2 else ''
+if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', dev):
+    sys.exit('usage: kimera-memory-forward DEVICE')
+row = json.load(open(conf))[dev]
+port, door = int(row['memory_port']), int(row.get('memory_door', 8766))
+if not (1024 <= port <= 65535 and 1024 <= door <= 65535):
+    sys.exit('memory_port and memory_door must be plain ports')
+ssh = row['ssh']
+key = os.path.expanduser('~/.ssh/kimera-memory-%s' % dev)
+os.execvp(ssh[0], ssh[:-1] + ['-i', key, '-o', 'IdentitiesOnly=yes', '-N', '-o', 'ExitOnForwardFailure=yes',
+          '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-R', '127.0.0.1:%d:127.0.0.1:%d' % (port, door), ssh[-1]])

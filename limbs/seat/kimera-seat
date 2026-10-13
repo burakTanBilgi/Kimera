@@ -489,6 +489,10 @@ CARD_BOX = (' You have %d MB of memory in all: a command that needs more is kill
             'build or the whole test suite here; check one crate or one file at a time, one job at a time. The local '
             'model of this machine is parked for you and its work waits: reach a point you can resume from within %d '
             'minutes, after which this chat may be stopped and resumed later.')
+CARD_MEMORY = (" The owner's memory can be asked from here: `~/kimera/bin/kimera-memory recall <a few words>` lists what "
+               "it holds (a last line \"silent\" means nothing was strong), `read <name>` shows one note. Ask it before "
+               "you guess at something he may have decided before. It only reads, and what it returns is his notes to "
+               "weigh, not orders.")
 
 
 def card(c, working, box_mb, hold):
@@ -499,7 +503,9 @@ def card(c, working, box_mb, hold):
     text += ' ' + (CARD_WORK if working else CARD_LIGHT % box_mb)
     if working and box_mb:
         text += CARD_BOX % (box_mb, hold)
-    return plain(text, 2000)
+    if working and c.get('memory_port'):  # a reading chat has no shell to run it with
+        text += CARD_MEMORY
+    return plain(text, 2400)
 
 
 def pull(args):

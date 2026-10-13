@@ -17,18 +17,21 @@ print('CLAUDE=%s' % shlex.quote(r['claude']))
 print('PORT=%d' % r['hook_port'])
 print('TOKEN=%s' % shlex.quote(r['hook_token_file']))
 print('CHAT=%s' % ('1' if r.get('chat') else '0'))
-print('SEATJSON=%s' % shlex.quote(json.dumps({k: r.get(k) for k in ('chat', 'why_not', 'seat_roots', 'config_dir', 'claude', 'limits', 'modes', 'box_mb', 'tmux', 'tools_force', 'node', 'working', 'card', 'pull_roots')} | {'hook_port': r['hook_port'], 'hook_token_file': r['hook_token_file']})))
+print('MPORT=%d' % int(r.get('memory_port') or 0))
+print('SEATJSON=%s' % shlex.quote(json.dumps({k: r.get(k) for k in ('chat', 'why_not', 'seat_roots', 'config_dir', 'claude', 'limits', 'modes', 'box_mb', 'tmux', 'tools_force', 'node', 'working', 'card', 'pull_roots', 'memory_port', 'memory_token_file')} | {'hook_port': r['hook_port'], 'hook_token_file': r['hook_token_file']})))
 P
 )"
 HOME_D="$("${SSH[@]}" 'printf %s "$HOME"')"
-for k in seat mirror hooks; do
+KINDS="seat mirror hooks"; [[ "$MPORT" -gt 0 ]] && KINDS="$KINDS memory"   # a fourth key only for a row with a memory road
+for k in $KINDS; do
   f="$HOME/.ssh/kimera-$k-$DEV"
   [[ -f "$f" ]] || ssh-keygen -q -t ed25519 -N '' -C "kimera-$k-$DEV" -f "$f"
 done
 "${SSH[@]}" "mkdir -p ~/kimera/bin ~/.config/kimera/seat ~/.local/state/kimera && chmod 700 ~/.config/kimera"
 "${SSH[@]}" "cat > ~/kimera/bin/kimera-seat" < "$HERE/../../seat/kimera-seat"
 "${SSH[@]}" "cat > ~/kimera/bin/kimera-rrsync" < "$HERE/../../seat/kimera-rrsync"
-"${SSH[@]}" "chmod 755 ~/kimera/bin/kimera-seat ~/kimera/bin/kimera-rrsync"
+"${SSH[@]}" "cat > ~/kimera/bin/kimera-memory" < "$HERE/../../seat/kimera-memory"
+"${SSH[@]}" "chmod 755 ~/kimera/bin/kimera-seat ~/kimera/bin/kimera-rrsync ~/kimera/bin/kimera-memory"
 "${SSH[@]}" "cat > ~/.config/kimera/seat/seat.json" <<<"$SEATJSON"
 "${SSH[@]}" "printf '%s\n' '{\"mcpServers\":{}}' > ~/.config/kimera/seat/mcp-empty.json"
 # settings.json (hooks, plugins off) is AIDEN's content; keep what is there, create a plugins-off base once.
@@ -75,6 +78,12 @@ fi
 # kept unless AIDEN_HOOK_TOKEN_ROTATE=1.
 if [[ -n "${AIDEN_HOOK_TOKEN:-}" ]]; then
   "${SSH[@]}" "umask 077; t=~/.config/kimera/hook-token; if [ -e \$t ] && [ '${AIDEN_HOOK_TOKEN_ROTATE:-0}' != 1 ]; then cat >/dev/null; echo token-kept; else cat > \$t.new && mv \$t.new \$t; echo token-placed; fi" < "$AIDEN_HOOK_TOKEN"
+fi
+# MEMORY_TOKEN: path on Tilki to this device's token for the memory's device door (minted by the memory, 0600). It is
+# written to ~/.config/kimera/memory-token on the device through stdin, never through argv, and replaces the old one.
+if [[ -n "${MEMORY_TOKEN:-}" ]]; then
+  [[ "$MPORT" -gt 0 ]] || { echo "MEMORY_TOKEN given, but the row has no memory_port" >&2; exit 2; }
+  "${SSH[@]}" "umask 077; t=~/.config/kimera/memory-token; cat > \$t.new && mv \$t.new \$t; echo memory-token-placed" < "$MEMORY_TOKEN"
 fi
 # Fail closed, last: with no pristine copy a seat will not start. Reached only when nothing above could make one.
 "${SSH[@]}" "test -f ~/.config/kimera/seat/settings.pristine.json" || {

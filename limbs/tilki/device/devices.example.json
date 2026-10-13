@@ -29,7 +29,9 @@
       "max_chats": 1
     },
     "mirror_dir": "~/.local/share/kimera/mirror/caretta/claude/projects",
-    "card": "You are running on Caretta, one of the owner's own machines: a 2013 MacBook Air with 2 cores (4 threads) and 3.8 GB of memory, started here by AIDEN through Kimera's door. Work to its size: one heavy job at a time, never a build and a test run together, at most 2 parallel jobs (-j2), and expect a full build to take minutes. It runs hot; a new chat is refused above 85 C."
+    "card": "You are running on Caretta, one of the owner's own machines: a 2013 MacBook Air with 2 cores (4 threads) and 3.8 GB of memory, started here by AIDEN through Kimera's door. Work to its size: one heavy job at a time, never a build and a test run together, at most 2 parallel jobs (-j2), and expect a full build to take minutes. It runs hot; a new chat is refused above 85 C.",
+    "memory_port": 8766,
+    "memory_token_file": "/home/USER/.config/kimera/memory-token"
   },
   "kirpi": {
     "ssh": [
@@ -79,6 +81,8 @@
         "acceptEdits",
         "auto"
       ]
-    }
+    },
+    "memory_port": 8766,
+    "memory_token_file": "/home/USER/.config/kimera/memory-token"
   }
 }

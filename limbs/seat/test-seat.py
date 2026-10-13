@@ -328,6 +328,9 @@ check('takes: light when the model is owed a turn', json.loads(call('sample')[1]
 S.snapshot = lambda: dict(avail_mb=300, load1=0.1, cores=4, disk_gb=50, temp_c=90, heavy=0, chats=0)
 check('takes: none when nothing fits', json.loads(call('sample')[1])['takes'] == 'none')
 S.snapshot = lambda: dict(avail_mb=4000, load1=0.1, cores=4, disk_gb=50, temp_c=40, heavy=0, chats=len(S.sessions()))
+check('a device without a memory road says nothing of the memory', 'kimera-memory' not in log3)
+check('a working chat on a device with a memory road is told how to ask it', 'kimera-memory recall' in S.card(dict(cfg, memory_port=8766), True, 1800, 120))
+check('a reading chat is not told of a command it has no shell for', 'kimera-memory' not in S.card(dict(cfg, memory_port=8766), False, 500, 0))
 S.TMUX_SHA256 = '0' * 64  # a swapped binary is refused, never executed
 check('a private tmux that is not the expected package is refused', call('has aiden-abcdef12')[0] == 2)
 print('\n%d failure(s)' % len(fails))

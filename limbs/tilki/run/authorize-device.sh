@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# authorize-device.sh DEVICE   (run on Tilki, only on Tan's word: it adds three restricted lines to the
+# authorize-device.sh DEVICE   (run on Tilki, only on Tan's word: it adds up to four restricted lines to the
 # device user's ~/.ssh/authorized_keys). Each line has `restrict` (no shell, no pty, no forwarding unless named):
 #   kimera-seat   : runs only ~/kimera/bin/kimera-seat (the nine verbs)
 #   kimera-mirror : runs only `rrsync -ro <config dir>/projects` (read-only copy of transcripts)
 #   kimera-hooks  : may only listen on 127.0.0.1:<hook_port> on the device (permitopen limited to the discard port: no useful local forwards); runs nothing
+#   kimera-memory : may only listen on 127.0.0.1:<memory_port> on the device (the road to the memory's device door); runs nothing.
+#                   Only for a row that has memory_port, and only when named: KEYS=memory
 # KEYS=seat,hooks limits it to those (default: seat,mirror,hooks), so Tan can name which keys he approves.
-# To undo: delete the lines ending in kimera-seat, kimera-mirror, kimera-hooks.
+# To undo: delete the lines ending in kimera-seat, kimera-mirror, kimera-hooks, kimera-memory.
 set -euo pipefail
 DEV="${1:?device name from devices.json}"
 CONF="${KIMERA_DEVICES:-$HOME/.config/kimera/devices.json}"
@@ -16,16 +18,18 @@ print('SSH=(%s)' % ' '.join(shlex.quote(x) for x in r['ssh']))
 print('CFG=%s' % shlex.quote(r['config_dir']))
 print('PORT=%d' % r['hook_port'])
 print('WRAP=%d' % (1 if r.get('rsync') else 0))
+print('MPORT=%d' % int(r.get('memory_port') or 0))
 P
 )"
 HOME_D="$("${SSH[@]}" 'printf %s "$HOME"')"
 S="$(cut -d' ' -f1,2 "$HOME/.ssh/kimera-seat-$DEV.pub")"
 M="$(cut -d' ' -f1,2 "$HOME/.ssh/kimera-mirror-$DEV.pub")"
 H="$(cut -d' ' -f1,2 "$HOME/.ssh/kimera-hooks-$DEV.pub")"
+Y=""; [[ "$MPORT" -gt 0 && -f "$HOME/.ssh/kimera-memory-$DEV.pub" ]] && Y="$(cut -d' ' -f1,2 "$HOME/.ssh/kimera-memory-$DEV.pub")"
 KEYS="${KEYS:-seat,mirror,hooks}"
-"${SSH[@]}" "python3 - '$HOME_D' '$CFG' '$PORT' '$KEYS' '$WRAP'" <<P
+"${SSH[@]}" "python3 - '$HOME_D' '$CFG' '$PORT' '$KEYS' '$WRAP' '$MPORT'" <<P
 import os, sys
-home, cfg, port, keys, wrap = sys.argv[1:6]
+home, cfg, port, keys, wrap, mport = sys.argv[1:7]
 # a device without the rsync package serves the mirror through kimera-rrsync and its unpacked rsync
 serve = ('%s/kimera/bin/kimera-rrsync %s/projects' % (home, cfg)) if wrap == '1' else ('/usr/bin/rrsync -ro %s/projects' % cfg)
 keys = keys.split(',')
@@ -35,8 +39,11 @@ want = [
   'restrict,port-forwarding,permitopen="127.0.0.1:9",permitlisten="127.0.0.1:%s",command="/bin/false" $H kimera-hooks' % port,
 ]
 names = ['seat', 'mirror', 'hooks']
+if '$Y':  # a row with a memory road and its key made by install-device.sh
+    want.append('restrict,port-forwarding,permitopen="127.0.0.1:9",permitlisten="127.0.0.1:%s",command="/bin/false" $Y kimera-memory' % mport)
+    names.append('memory')
 if not keys or any(k not in names for k in keys):
-    sys.exit('KEYS must be some of seat,mirror,hooks')
+    sys.exit('KEYS must be some of ' + ','.join(names))
 # every one of our keys is cleaned of weaker lines, chosen or not; only the chosen ones are (re)added
 blobs = [w.split()[-2] for w in want]
 chosen = [w.split()[-2] for n, w in zip(names, want) if n in keys]
