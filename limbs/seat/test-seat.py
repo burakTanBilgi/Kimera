@@ -162,6 +162,8 @@ mem = root + '/with-memory'
 rc, out = call(f'seed {mem} {C}', tar_of([('code.txt', b'x\n', 'file')]) + pack_of([('INDEX.md', b'# what Tan decided\n'), ('notes/a.md', b'a\n')]))
 check('a memory pack sent after the work lands in .memory/', rc == 0 and out.startswith('ok 3 ') and open(mem + '/.memory/INDEX.md').read().startswith('# what'))
 check('the memory pack is read-only and the work is not', stat.S_IMODE(os.stat(mem + '/.memory/notes/a.md').st_mode) == 0o400 and stat.S_IMODE(os.stat(mem + '/code.txt').st_mode) == 0o600)
+check('work that carries its own .memory is refused by the device too', call(f'seed {mem} {C}', tar_of([('.memory/INDEX.md', b'planted\n', 'file')]))[0] == 2
+      and call(f'seed {mem} {C}', tar_of([('.Memory/INDEX.md', b'planted\n', 'file')]))[0] == 2 and open(mem + '/.memory/INDEX.md').read().startswith('# what'))
 check('fetch does not report the memory pack', call(f'fetch {mem}') == (1, 'no changes'))
 
 # fetch: what a chat changed in a seeded folder comes back as a text diff

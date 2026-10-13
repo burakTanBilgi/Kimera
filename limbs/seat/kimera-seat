@@ -269,6 +269,13 @@ def unpack(c, real, commit, spool):
         parts = m.name.split('/')
         if m.name.startswith('/') or '..' in parts or '' in parts[:-1] or len(m.name) > 1024 or '\0' in m.name:
             raise Refused('the work holds a path that leaves its folder')
+        # .memory is where a chat is told its owner's memory lies. Only the pack may be there, and the pack's files
+        # come without the write bit; the work's files (from git) always have it. Judged here, by the one that unpacks.
+        first = [x for x in parts if x not in ('', '.')][:1]
+        if first and first[0].lower() == '.memory' and (m.isdir() or m.isreg()) and not m.isdir() and m.mode & 0o200:
+            raise Refused('the work itself holds a .memory folder; that name is kept for the memory pack')
+        if first and first[0].lower() == '.memory' and first[0] != '.memory':
+            raise Refused('the work itself holds a .memory folder; that name is kept for the memory pack')
         if m.isdir():
             continue
         if not m.isreg():  # links, devices, pipes: never unpacked
