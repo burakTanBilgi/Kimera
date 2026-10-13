@@ -150,6 +150,20 @@ call(f'seed {work} {C}', tar_of([('only.txt', b'x', 'file')]))
 check('seed leaves no spool file behind', not [f for f in os.listdir(os.path.join(tmp, 'kimera')) if f.startswith('seed.')])
 check('seed is in the audit log', 'seeded' in open(S.LOG).read())
 
+# the memory pack: a second tar in the same stream, laid read-only, never reported by fetch
+def pack_of(entries):
+    b = _io.BytesIO()
+    with _tar.open(fileobj=b, mode='w') as t:
+        for name, body in entries:
+            i = _tar.TarInfo('.memory/' + name); i.size, i.mode = len(body), 0o444
+            t.addfile(i, _io.BytesIO(body))
+    return b.getvalue()
+mem = root + '/with-memory'
+rc, out = call(f'seed {mem} {C}', tar_of([('code.txt', b'x\n', 'file')]) + pack_of([('INDEX.md', b'# what Tan decided\n'), ('notes/a.md', b'a\n')]))
+check('a memory pack sent after the work lands in .memory/', rc == 0 and out.startswith('ok 3 ') and open(mem + '/.memory/INDEX.md').read().startswith('# what'))
+check('the memory pack is read-only and the work is not', stat.S_IMODE(os.stat(mem + '/.memory/notes/a.md').st_mode) == 0o400 and stat.S_IMODE(os.stat(mem + '/code.txt').st_mode) == 0o600)
+check('fetch does not report the memory pack', call(f'fetch {mem}') == (1, 'no changes'))
+
 # fetch: what a chat changed in a seeded folder comes back as a text diff
 back = root + '/builder'
 call(f'seed {back} {C}', tar_of([('a.txt', b'one\ntwo\n', 'file'), ('.gitignore', b'target/\n', 'file')]))

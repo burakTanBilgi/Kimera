@@ -3,8 +3,11 @@
   admit
   start  NAME CWD SID [MODE] [MODEL] [TOOLS]
   resume NAME CWD SID [MODE] [MODEL] [TOOLS]
-  seed CWD SRC    put a read copy of the work in SRC (a git worktree on this machine, tracked files at HEAD only)
-                  into the seat folder CWD on the device, replacing what was there. Answers `ok FILES BYTES COMMIT`
+  seed CWD SRC [PACK]
+                  put a read copy of the work in SRC (a git worktree on this machine, tracked files at HEAD only)
+                  into the seat folder CWD on the device, replacing what was there. Answers `ok FILES BYTES COMMIT`.
+                  PACK: a plain folder of text files on this machine (a chat's memory), laid read-only at
+                  CWD/.memory/ in the same seed, so the chat has it and `fetch` never reports it
   fetch CWD       what a chat changed in a seeded folder, as one text diff on stdout (2 MB at most); exit 1 and
                   `no changes` when there is none. A link or a binary file is refused by name
   sample          one JSON line of the device's memory, load, swap, temperature and each chat's resident memory
@@ -15,7 +18,7 @@ command); before that it uses the device user's own login to call the same scrip
 The device checks the same shapes again, applies its own admission and writes its audit line (~/kimera/run.log).
 Rows: ~/.config/kimera/devices.json (`ssh` as before, `run`: {"key": path, "authorized": bool}); an example is in limbs/tilki/device/devices.example.json.
 """
-import json, os, re, subprocess, sys, time
+import io, json, os, re, shutil, stat, subprocess, sys, tarfile, tempfile, threading, time
 
 CONF = os.environ.get('KIMERA_DEVICES', os.path.expanduser('~/.config/kimera/devices.json'))
 AWAY_LOG = os.path.expanduser('~/.local/state/kimera/run-away.log')
@@ -50,8 +53,8 @@ def check(verb, args):
         if len(args) != 1 or not PATH_RE.fullmatch(args[0]) or '..' in args[0].split('/'): bad('fetch needs CWD, an absolute path of a-z, 0-9, _ . / -')
         return
     if verb == 'seed':
-        if len(args) != 2: bad('seed needs CWD SRC')
-        for v, what in ((args[0], 'CWD'), (args[1], 'SRC')):
+        if len(args) not in (2, 3): bad('seed needs CWD SRC [PACK]')
+        for v, what in zip(args, ('CWD', 'SRC', 'PACK')):
             if not PATH_RE.fullmatch(v) or '..' in v.split('/'): bad('%s must be an absolute path of a-z, 0-9, _ . / -' % what)
         return
     if verb in ('has', 'capture', 'type', 'key', 'kill', 'facts'):
@@ -62,6 +65,44 @@ def check(verb, args):
         if verb not in ('capture', 'key') and extra: bad('%s takes only NAME' % verb)
         return
     bad('unknown verb; use admit start resume seed fetch has capture type key kill facts sample')
+
+
+MAX_PACK, MAX_PACK_FILES = 20 << 20, 2000
+
+
+def pack_tar(path, row):
+    """(a temp file holding a tar of the pack under .memory/, None) or (None, one sentence). The pack is a chat's
+    memory: plain text files only, no links, bounded, and only from a folder this device's row allows."""
+    src = os.path.realpath(path)
+    roots = [os.path.realpath(os.path.expanduser(r)) for r in row.get('pack_roots', [])]
+    if not any(src.startswith(r + '/') for r in roots) or not os.path.isdir(src):
+        return None, 'that pack is not a folder under a pack root of this device'
+    out = tempfile.TemporaryFile()
+    total = n = 0
+    with tarfile.open(fileobj=out, mode='w') as t:
+        for d, dirs, files in os.walk(src):
+            dirs[:] = sorted(x for x in dirs if not os.path.islink(os.path.join(d, x)))
+            for f in sorted(files):
+                p = os.path.join(d, f)
+                rel = os.path.relpath(p, src)
+                st = os.lstat(p)
+                if not stat.S_ISREG(st.st_mode):
+                    return None, 'the pack holds something that is not a plain file'
+                n, total = n + 1, total + st.st_size
+                if n > MAX_PACK_FILES or total > MAX_PACK:
+                    return None, 'the pack is over 2000 files or 20 MB'
+                body = open(p, 'rb').read()
+                try:
+                    if b'\0' in body:
+                        raise ValueError
+                    body.decode('utf-8')
+                except ValueError:
+                    return None, 'the pack holds a file that is not plain text'
+                i = tarfile.TarInfo('.memory/' + rel)
+                i.size, i.mode, i.mtime = len(body), 0o444, int(st.st_mtime)
+                t.addfile(i, io.BytesIO(body))
+    out.seek(0)
+    return out, None
 
 
 def main():
@@ -112,6 +153,12 @@ def main():
         if not top or top.returncode != 0 or os.path.realpath(top.stdout.strip()) != src or not re.fullmatch(r'[0-9a-f]{40}', commit):
             print('that folder is not the top of a git worktree with a commit')
             return 2
+        pack = None
+        if len(args) == 3:
+            pack, why = pack_tar(args[2], row)
+            if pack is None:
+                print(why)
+                return 2
         feed = subprocess.Popen(git + ['archive', '--format=tar', commit], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         args = [args[0], commit]
     if run.get('authorized'):
@@ -123,7 +170,27 @@ def main():
         cmd = ssh + ["SSH_ORIGINAL_COMMAND='%s' ~/kimera/bin/kimera-seat" % ' '.join([verb] + args)]
     try:
         if feed:  # the work streams from git to the device; it is never held whole in this machine's memory
-            r = subprocess.run(cmd, stdin=feed.stdout, capture_output=True, timeout=180)
+            if pack is None:
+                r = subprocess.run(cmd, stdin=feed.stdout, capture_output=True, timeout=180)
+            else:  # the work, then the pack, down one pipe
+                p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+                def pump():
+                    try:
+                        shutil.copyfileobj(feed.stdout, p.stdin)
+                        shutil.copyfileobj(pack, p.stdin)
+                        p.stdin.close()
+                    except OSError:
+                        pass
+                t = threading.Thread(target=pump, daemon=True)
+                t.start()
+                try:
+                    out = p.stdout.read()
+                    p.wait(timeout=180)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    raise
+                r = subprocess.CompletedProcess(cmd, p.returncode, out, b'')
             feed.stdout.close()
             if feed.wait(timeout=10) != 0 and r.returncode == 0:
                 print('git could not pack the work')

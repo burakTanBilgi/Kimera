@@ -255,7 +255,7 @@ def unpack(c, real, commit, spool):
     # can claim a header of any size, and a device with a model loaded has no memory to give to a lie.
     resource.setrlimit(resource.RLIMIT_AS, (768 << 20, 768 << 20))
     try:
-        tar = tarfile.open(spool, mode='r:')
+        tar = tarfile.open(spool, mode='r:', ignore_zeros=True)  # the work, then (if sent) the memory pack: two tars in a row
         members, seen = [], 0
         for m in tar:
             seen += 1
@@ -298,7 +298,9 @@ def unpack(c, real, commit, spool):
             dest = os.path.join(new, m.name)
             os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
             src = tar.extractfile(m)
-            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700 if m.mode & 0o100 else 0o600)
+            # private to the device user; a file sent without the write bit (the memory pack) lands read-only
+            mode = (0o700 if m.mode & 0o100 else 0o600) & (0o777 if m.mode & 0o200 else 0o555)
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
             with os.fdopen(fd, 'wb') as f:
                 shutil.copyfileobj(src, f)
         if os.path.lexists(real):

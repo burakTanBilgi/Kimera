@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.8.0 (2026-10-13)
+
+- `seed` takes an optional pack: a plain folder of text files laid read-only at `.memory/` in the seat folder, in place before the chat starts and never reported by `fetch`. Text only, no links, 2,000 files, 20 MB.
+
 ## 0.7.0 (2026-10-13)
 
 - The 4 GB machine's transcripts are mirrored too. It has no rsync package, so the mirror key's forced command is `kimera-rrsync`, a small wrapper that serves the folder read-only with an rsync unpacked in the home folder.
