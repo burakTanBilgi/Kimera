@@ -1,0 +1,14 @@
+#!/bin/sh
+# kimera-rrsync DIR: the forced command of the mirror key on a device that has no rsync package. It serves DIR
+# read-only through rrsync, with the rsync unpacked in ~/kimera/rsync (official Debian package, no system install).
+R=$HOME/kimera/rsync/root
+P=$HOME/kimera/rsync/rrsync
+[ -d "${1:-}" ] || { echo "kimera-rrsync: no such folder" >&2; exit 2; }
+PATH=$R/usr/bin:/usr/bin:/bin
+LD_LIBRARY_PATH=$R/usr/lib/x86_64-linux-gnu
+export PATH LD_LIBRARY_PATH
+# rrsync names /usr/bin/rsync on one line; keep a copy with that line pointed at the unpacked program
+if [ ! -s "$P" ] || [ "$R/usr/bin/rrsync" -nt "$P" ]; then
+  sed "s#^RSYNC = '/usr/bin/rsync'#RSYNC = '$R/usr/bin/rsync'#" "$R/usr/bin/rrsync" > "$P.new" && mv "$P.new" "$P"
+fi
+exec python3 "$P" -ro "$1"

@@ -15,6 +15,7 @@ r = json.load(open(sys.argv[1]))[sys.argv[2]]
 print('SSH=(%s)' % ' '.join(shlex.quote(x) for x in r['ssh']))
 print('CFG=%s' % shlex.quote(r['config_dir']))
 print('PORT=%d' % r['hook_port'])
+print('WRAP=%d' % (1 if r.get('rsync') else 0))
 P
 )"
 HOME_D="$("${SSH[@]}" 'printf %s "$HOME"')"
@@ -22,13 +23,15 @@ S="$(cut -d' ' -f1,2 "$HOME/.ssh/kimera-seat-$DEV.pub")"
 M="$(cut -d' ' -f1,2 "$HOME/.ssh/kimera-mirror-$DEV.pub")"
 H="$(cut -d' ' -f1,2 "$HOME/.ssh/kimera-hooks-$DEV.pub")"
 KEYS="${KEYS:-seat,mirror,hooks}"
-"${SSH[@]}" "python3 - '$HOME_D' '$CFG' '$PORT' '$KEYS'" <<P
+"${SSH[@]}" "python3 - '$HOME_D' '$CFG' '$PORT' '$KEYS' '$WRAP'" <<P
 import os, sys
-home, cfg, port, keys = sys.argv[1:5]
+home, cfg, port, keys, wrap = sys.argv[1:6]
+# a device without the rsync package serves the mirror through kimera-rrsync and its unpacked rsync
+serve = ('%s/kimera/bin/kimera-rrsync %s/projects' % (home, cfg)) if wrap == '1' else ('/usr/bin/rrsync -ro %s/projects' % cfg)
 keys = keys.split(',')
 want = [
   'restrict,command="%s/kimera/bin/kimera-seat" $S kimera-seat' % home,
-  'restrict,command="/usr/bin/rrsync -ro %s/projects" $M kimera-mirror' % cfg,
+  'restrict,command="%s" $M kimera-mirror' % serve,
   'restrict,port-forwarding,permitopen="127.0.0.1:9",permitlisten="127.0.0.1:%s",command="/bin/false" $H kimera-hooks' % port,
 ]
 names = ['seat', 'mirror', 'hooks']

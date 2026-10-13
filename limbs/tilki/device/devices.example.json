@@ -28,6 +28,7 @@
     "box_mb": 500,
     "tmux": true,
     "node": true,
+    "rsync": true,
     "tools_force": "Read,Grep,Glob"
   }
 }

@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.7.0 (2026-10-13)
+
+- The 4 GB machine's transcripts are mirrored too. It has no rsync package, so the mirror key's forced command is `kimera-rrsync`, a small wrapper that serves the folder read-only with an rsync unpacked in the home folder.
+
 ## 0.6.5 (2026-10-13)
 
 Found by review of 0.6.4.

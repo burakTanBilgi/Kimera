@@ -27,7 +27,8 @@ for k in seat mirror hooks; do
 done
 "${SSH[@]}" "mkdir -p ~/kimera/bin ~/.config/kimera/seat ~/.local/state/kimera && chmod 700 ~/.config/kimera"
 "${SSH[@]}" "cat > ~/kimera/bin/kimera-seat" < "$HERE/../../seat/kimera-seat"
-"${SSH[@]}" "chmod 755 ~/kimera/bin/kimera-seat"
+"${SSH[@]}" "cat > ~/kimera/bin/kimera-rrsync" < "$HERE/../../seat/kimera-rrsync"
+"${SSH[@]}" "chmod 755 ~/kimera/bin/kimera-seat ~/kimera/bin/kimera-rrsync"
 "${SSH[@]}" "cat > ~/.config/kimera/seat/seat.json" <<<"$SEATJSON"
 "${SSH[@]}" "printf '%s\n' '{\"mcpServers\":{}}' > ~/.config/kimera/seat/mcp-empty.json"
 # settings.json (hooks, plugins off) is AIDEN's content; keep what is there, create a plugins-off base once.
