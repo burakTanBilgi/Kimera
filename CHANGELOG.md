@@ -3,6 +3,13 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.6.5 (2026-10-13)
+
+Found by review of 0.6.4.
+
+- `fetch` also refuses every code point Unicode calls ignorable by default (fillers, joiners, all variation selectors, tags), the blank braille cell, and any space that is not the plain one.
+- Known limit: this is not a look-alike filter. A diff is untrusted text and is reviewed as such by whoever applies it.
+
 ## 0.6.4 (2026-10-13)
 
 Found by review of 0.6.3.

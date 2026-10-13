@@ -187,13 +187,15 @@ rc, out = call(f'fetch {back}')
 check('changes with terminal control characters do not travel', rc == 2 and '\x1b' not in out)
 os.remove(back + '/esc.txt')
 for label, body in (('a direction override', 'if admin\u202e // ok\n'), ('a lone carriage return', 'safe\rrm -rf\n'), ('a zero-width space', 'a\u200bb\n'), ('an invisible tag character', 'a\U000E0041b\n'),
-                    ('a soft hyphen', 'pass\u00adword\n'), ('a hidden variation selector', 'a\U000E0101b\n'), ('a private-use character', 'a\ue000b\n')):
+                    ('a soft hyphen', 'pass\u00adword\n'), ('a hidden variation selector', 'a\U000E0101b\n'), ('a private-use character', 'a\ue000b\n'), ('a Hangul filler', 'a\u3164b\n'),
+                    ('a no-break space', 'a\u00a0b\n'), ('a blank braille cell', 'a\u2800b\n'), ('an emoji variation selector', 'a\ufe0fb\n'),
+                    ('a combining grapheme joiner', 'a\u034fb\n')):
     open(back + '/h.txt', 'w', newline='').write(body)
     check('changes with %s do not travel' % label, call(f'fetch {back}')[0] == 2)
 os.remove(back + '/h.txt')
 open(back + '/crlf.txt', 'w', newline='').write('one\r\ntwo\r\n')
 check('a file with Windows line ends still travels', call(f'fetch {back}')[0] == 0)
-open(back + '/crlf.txt', 'w', newline='').write('T\u00fcrk\u00e7e \u2764\ufe0f \u4e2d\u6587 caf\u00e9\r\n')
+open(back + '/crlf.txt', 'w', newline='').write('T\u00fcrk\u00e7e \u2764 \U0001F600 \u4e2d\u6587 caf\u00e9\r\n')
 check('ordinary non-English text and emoji still travel', call(f'fetch {back}')[0] == 0)
 os.remove(back + '/crlf.txt')
 open(os.path.join(S.base_of(os.path.realpath(back)), 'index.lock'), 'w').close()

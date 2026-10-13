@@ -53,16 +53,24 @@ def plain(text, most=120):
     return ''.join(ch if ch.isprintable() else '?' for ch in str(text))[:most]
 
 
+IGNORABLE = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+             (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x2800, 0x2800), (0x3164, 0x3164), (0xFE00, 0xFE0F),
+             (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A),
+             (0xE0000, 0xE0FFF))
+
+
 def hidden(ch):
-    """True for a character a reader does not see or that changes how the text around it reads. Decided by Unicode
-    category, not by a list: control (but newline, tab, carriage return), format (direction marks, zero-width
-    characters, tags, the byte-order mark), surrogate, private use, unassigned, line and paragraph separators; and the
-    variation selectors that carry no picture (they can hide bytes)."""
-    if ch in '\n\t\r':
+    """True for a character a reader does not see or that changes how the text around it reads: by Unicode category
+    (control but newline, tab and carriage return; format; surrogate; private use; unassigned; line and paragraph
+    separators; any space that is not the plain one), and every code point Unicode itself calls ignorable by default
+    (fillers, joiners, all variation selectors, tags), plus the blank braille cell.
+    This is not a look-alike filter: a Cyrillic letter that looks like a Latin one passes. A diff is untrusted text
+    and is reviewed as such by whoever applies it."""
+    if ch in '\n\t\r ':
         return False
     o = ord(ch)
-    return (unicodedata.category(ch) in ('Cc', 'Cf', 'Cs', 'Co', 'Cn', 'Zl', 'Zp')
-            or 0xFE00 <= o <= 0xFE0E or 0xE0100 <= o <= 0xE01EF)
+    return (unicodedata.category(ch) in ('Cc', 'Cf', 'Cs', 'Co', 'Cn', 'Zl', 'Zp', 'Zs')
+            or any(lo <= o <= hi for lo, hi in IGNORABLE))
 
 
 def audit(verb, name, outcome):

@@ -9,7 +9,7 @@ the workers (agent chats), and Kimera owns the machines and the road to them.
 
 This repository is the public part of a private one. It holds the door, the job switch, their tests and
 the measurements. Addresses, host configuration, the desk screens of the machines and the guards stay
-private. Version 0.6.4, 13 October 2026.
+private. Version 0.6.5, 13 October 2026.
 
 The history here starts at 0.4.0, one commit per release from then on. The private repository began on 8 October 2026 and held about 60 commits and
 13 release tags by this version, all tagged on 13 October; the work itself started in late September.
@@ -133,7 +133,7 @@ on Kirpi held 260 to 280 MB of resident memory inside its 500 MB box, while the 
 ## Tests
 
 ```sh
-python3 limbs/seat/test-seat.py        # 76 checks: the seat, with a temporary home and a fake tmux
+python3 limbs/seat/test-seat.py        # 81 checks: the seat, with a temporary home and a fake tmux
 python3 limbs/tilki/run/test-perf.py   # 15 checks: readings from a device that lies, is away, or is refused
 python3 limbs/kirpi/jobs/test-sim.py   # 18 checks: the job switch against a simulated machine
 ```
@@ -155,6 +155,9 @@ was added.
 - **Built for one person's machines.** There is no multi-user story, no installer for other setups, and
   the device names are written into comments and tests.
 - **The job switch's real-machine test predates its newest mode** (see Tests).
+- **`fetch` filters hidden characters, not look-alikes.** A diff that comes back from a device is refused if it
+  holds invisible or direction-changing characters, but a letter from another script that looks like a Latin
+  one passes. Whoever applies the diff reviews it as untrusted text.
 - **The door does not check who calls it on the laptop.** Any program of the same user can run
   `kimera-run`. The narrow keys protect the devices, not the laptop.
 
