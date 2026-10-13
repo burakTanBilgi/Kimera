@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.10.4 (2026-10-13)
+
+- `kimera-ssh DEVICE [ARGS]`: ssh to a device by its name. Who and where the device is comes from its row, so no script holds it.
+
 ## 0.10.3 (2026-10-13)
 
 - Found by review of 0.10.1: the plugin switch fails closed. A plugin that cannot be read or named is a reason to refuse the start, not something to skip.

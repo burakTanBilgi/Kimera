@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""kimera-ssh DEVICE [ARGS...]: ssh to a device by its name. Who and where it is (user, host, address) is read from
+the device's row in ~/.config/kimera/devices.json, so no script in the repository has to hold it."""
+import json, os, re, sys
+if len(sys.argv) < 2 or not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', sys.argv[1]):
+    print('usage: kimera-ssh DEVICE [ARGS...]', file=sys.stderr); sys.exit(4)
+conf = os.environ.get('KIMERA_DEVICES', os.path.expanduser('~/.config/kimera/devices.json'))
+try:
+    ssh = json.load(open(conf))[sys.argv[1]]['ssh']
+    assert isinstance(ssh, list) and ssh and all(isinstance(x, str) for x in ssh)
+except Exception as e:
+    print('kimera-ssh: no usable row for %s in %s (%s)' % (sys.argv[1], conf, type(e).__name__), file=sys.stderr); sys.exit(4)
+os.execvp(ssh[0], ssh + sys.argv[2:])
