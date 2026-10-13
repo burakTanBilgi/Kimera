@@ -741,14 +741,21 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     # The bare name reaches the installed program or nothing. On a device with a memory road, any other folder that
     # holds something of that name is taken off the chat's PATH, the system's own included, and a chat is told of
     # the command only when the name does reach the installed one.
-    dirs = [d for d in base.split(':') if d] + extra
+    dirs = base.split(':') + extra if c.get('memory_port') else [d for d in base.split(':') if d] + extra
     if c.get('memory_port'):
-        dirs = [d for d in dirs if d == cmds or not os.path.lexists(os.path.join(d, 'kimera-memory'))]
+        # only absolute folders: a relative one (or an empty entry, which means the chat's own folder) is the chat's to fill
+        dirs = [d for d in dirs if os.path.isabs(d) and (d == cmds or not os.path.lexists(os.path.join(d, 'kimera-memory')))]
     told = cmds in dirs and shutil.which('kimera-memory', path=':'.join(dirs)) == cmds + '/kimera-memory'
+    for rc in ('.bashrc', '.bash_profile', '.bash_login', '.bash_aliases', '.profile', '.zshrc', '.zshenv', '.zprofile'):
+        try:  # an alias or a function of that name in a start file of the shell would stand in front of the PATH
+            if told and b'kimera-memory' in open(os.path.join(HOME, rc), 'rb').read():
+                told = False
+        except OSError:
+            pass
     if not told:
         dirs = [d for d in dirs if d != cmds]
         c = dict(c, memory_port=None)
-    if extra or dirs != [d for d in base.split(':') if d]:
+    if extra or dirs != base.split(':'):
         cmd = ['env', 'PATH=%s' % ':'.join(dirs)] + cmd
     about = card(c, bool(w) or not (c.get('tools_force') or c.get('working')), box_mb or 0, (w or {}).get('hold_minutes', 120))
     if about:

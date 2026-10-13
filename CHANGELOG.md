@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.9 (2026-10-14)
+
+- From a review by an agent on a device: with a memory road only absolute folders stay on a chat's PATH, and a chat is told nothing of the memory command when a start file of the shell names it.
+
 ## 0.12.8 (2026-10-14)
 
 - No change to the public part.
