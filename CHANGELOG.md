@@ -3,6 +3,14 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.6.1 (2026-10-13)
+
+Found by review of 0.6.0, all in `fetch`.
+
+- A file name can no longer forge a line of the log or of an answer.
+- Bounds come before the work: changed and new files are measured first and only then taken in, and every git output is read up to a cap.
+- A chat's own `.gitattributes` cannot pass a binary file off as text: attributes are read from what was seeded, and the diff is checked again for a NUL byte and valid UTF-8.
+
 ## 0.6.0 (2026-10-13)
 
 - `fetch`, the twelfth verb: what a chat changed in a seeded folder since the seed, as one text diff (2 MB at most). A link or a binary file is refused by name, and what the work itself ignores is left out. The record of what was seeded is a git repository kept outside the seat folder; git runs with no hooks, no outside diff program and none of the user's configuration. The caller applies the diff itself; nothing in it is run.

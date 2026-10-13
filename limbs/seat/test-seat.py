@@ -165,6 +165,22 @@ check('fetch refuses a binary file by name', rc == 2 and 'pic.bin' in out)
 os.remove(back + '/pic.bin'); S.MAX_FETCH = 20
 check('fetch refuses changes over the size limit', call(f'fetch {back}')[0] == 2)
 S.MAX_FETCH = 2 << 20
+open(back + '/.gitattributes', 'w').write('*.bin diff text\n'); open(back + '/pic.bin', 'wb').write(bytes(range(256)) * 4)
+rc, out = call(f'fetch {back}')
+check('a chat\'s own .gitattributes cannot pass a binary file off as text', rc == 2 and '\x00' not in out)
+os.remove(back + '/pic.bin'); os.remove(back + '/.gitattributes')
+evil = back + '/x\n2026-01-01T00:00:00+0000 start aiden-forged001 ok'
+os.symlink('/etc/passwd', evil)
+rc, out = call(f'fetch {back}')
+check('a file name cannot forge a line of the answer or of the log', rc == 2 and len(out.splitlines()) == 1
+      and not any(l.startswith('2026-01-01T00:00:00+0000 start aiden-forged001') for l in open(S.LOG).read().splitlines()))
+os.remove(evil)
+seeds = os.path.join(tmp, 'kimera', 'seeds')
+size = lambda: sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(seeds) for f in fs)
+before = size(); open(back + '/huge.txt', 'w').write('x' * (3 << 20))
+rc, out = call(f'fetch {back}')
+check('a huge file is refused by name before anything is taken in', rc == 2 and 'huge.txt' in out and size() - before < (1 << 20))
+os.remove(back + '/huge.txt')
 os.makedirs(root + '/never'); check('fetch refuses a folder that was not seeded', call(f'fetch {root}/never')[0] == 2)
 check('fetch refuses a folder outside the roots', call('fetch /etc')[0] == 2)
 check('the record of the seed is kept outside the seat folder', not os.path.exists(back + '/.git') and os.listdir(os.path.join(tmp, 'kimera', 'seeds')))

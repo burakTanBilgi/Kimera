@@ -16,7 +16,7 @@ Answers on stdout, one line (or the pane / one JSON object). Exit codes:
   0 ok / yes   1 no / failed   2 refused (one sentence)   4 bad arguments   (3 device away is kimera-run's)
 Config: ~/.config/kimera/seat/seat.json. Audit: ~/kimera/run.log (one line per verb, ok / no / failed / refused; `type` logs the length only).
 """
-import hashlib, fcntl, json, os, re, shutil, subprocess, sys, tarfile, time
+import hashlib, fcntl, json, os, re, shutil, stat, subprocess, sys, tarfile, time
 
 HOME = os.path.expanduser('~')
 TMUX_SHA256 = '2967b531cb415b19afbc153bc19eff1c2e461726781a36c27c855a166bb36d4b'  # Debian trixie tmux 3.5a-3 amd64 (usr/bin/tmux)
@@ -46,11 +46,17 @@ class Bad(Exception):
     pass
 
 
+def plain(text, most=120):
+    """A name or a sentence that may come from a chat (a file name, say): one printable line, so it can forge neither
+    a line of the log nor a line of an answer."""
+    return ''.join(ch if ch.isprintable() else '?' for ch in str(text))[:most]
+
+
 def audit(verb, name, outcome):
     try:
         os.makedirs(os.path.dirname(LOG), exist_ok=True)
         with open(LOG, 'a') as f:
-            f.write('%s %s %s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z'), verb, name or '-', outcome))
+            f.write('%s %s %s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z'), verb, plain(name or '-', 200), plain(outcome, 600)))
     except OSError:
         pass
 
@@ -283,14 +289,24 @@ def base_of(real):
     return os.path.join(HOME, 'kimera', 'seeds', hashlib.sha256(real.encode()).hexdigest()[:24] + '.git')
 
 
-def git(real, *a, **kw):
+def git(real, *a, cap=None, attrs_from_seed=False):
     """git on the seat folder with its record kept OUTSIDE the folder, and nothing of the user's or the system's
-    configuration: no hooks, no outside diff program, no text conversion."""
+    configuration: no hooks, no outside diff program, no text conversion. With `attrs_from_seed` the attributes are
+    read from what was seeded, not from the folder, so a chat's own .gitattributes cannot pass a binary file off as
+    text. With `cap` the output is read up to that many bytes and git is stopped beyond it (returns None)."""
     env = dict(os.environ, GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0')
-    return subprocess.run(['git', '--git-dir=' + base_of(real), '--work-tree=' + real, '-c', 'core.hooksPath=/dev/null',
-                           '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null', '-c', 'user.name=kimera',
-                           '-c', 'user.email=kimera@localhost', '-c', 'core.quotePath=false'] + list(a),
-                          capture_output=True, env=env, cwd=real, **kw)
+    cmd = ['git', '--git-dir=' + base_of(real), '--work-tree=' + real] + (['--attr-source=HEAD'] if attrs_from_seed else []) + [
+        '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null',
+        '-c', 'user.name=kimera', '-c', 'user.email=kimera@localhost', '-c', 'core.quotePath=false'] + list(a)
+    if cap is None:
+        return subprocess.run(cmd, capture_output=True, env=env, cwd=real)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd=real)
+    out = p.stdout.read(cap + 1)
+    if len(out) > cap:
+        p.kill()
+        p.wait()
+        return None
+    return out if p.wait() == 0 else None
 
 
 def baseline(real):
@@ -322,24 +338,53 @@ def fetch(args):
         raise Refused('that folder was not seeded here, or this device has no git')
     lock = take_lock()
     try:
+        # First, what would come back, found without taking anything in: a chat can leave a file of any size here
+        changed = git(real, 'diff', '--name-only', '--no-renames', '-z', 'HEAD', cap=1 << 20, attrs_from_seed=True)
+        fresh = git(real, 'ls-files', '--others', '--exclude-standard', '-z', cap=1 << 20)
+        if changed is None or fresh is None:
+            raise Refused('too many changes to come back as one diff')
+        names = [n for n in (changed + fresh).decode('utf-8', 'replace').split('\0') if n]
+        if len(names) > 2000:
+            raise Refused('too many changes to come back as one diff (%d files)' % len(names))
+        total = 0
+        for n in names:
+            try:
+                st = os.lstat(os.path.join(real, n))
+            except OSError:
+                continue  # deleted: it comes back as a deletion
+            if not stat.S_ISREG(st.st_mode):
+                raise Refused('not a plain file, so it cannot come back: %s' % plain(n))
+            total += st.st_size
+            if st.st_size > MAX_FETCH or total > 4 * MAX_FETCH:
+                raise Refused('too large to come back as a diff: %s' % plain(n))
         if git(real, 'add', '-A').returncode != 0:
             raise Refused('the device could not read the folder')
-        raw = git(real, 'diff', '--cached', '--raw', '--no-renames', '-z', 'HEAD').stdout.decode('utf-8', 'replace').split('\0')
+        raw = git(real, 'diff', '--cached', '--raw', '--no-renames', '-z', 'HEAD', cap=4 << 20)
+        num = git(real, 'diff', '--cached', '--numstat', '--no-renames', '-z', 'HEAD', cap=4 << 20, attrs_from_seed=True)
+        if raw is None or num is None:
+            raise Refused('too many changes to come back as one diff')
+        raw, num = (x.decode('utf-8', 'replace').split('\0') for x in (raw, num))
         odd = [raw[i + 1] for i in range(0, len(raw) - 1, 2)
                if not all(m in ('000000', '100644', '100755') for m in raw[i].lstrip(':').split()[:2])]
         if odd:
-            raise Refused('not a plain file, so it cannot come back: %s' % ', '.join(odd[:5]))
-        num = git(real, 'diff', '--cached', '--numstat', '--no-renames', '-z', 'HEAD').stdout.decode('utf-8', 'replace').split('\0')
+            raise Refused('not a plain file, so it cannot come back: %s' % ', '.join(plain(n) for n in odd[:5]))
         binary = [n.split('\t', 2)[2] for n in num if n.startswith('-\t-\t')]
         if binary:
-            raise Refused('a binary file cannot come back: %s' % ', '.join(binary[:5]))
-        out = git(real, 'diff', '--cached', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD').stdout
+            raise Refused('a binary file cannot come back: %s' % ', '.join(plain(n) for n in binary[:5]))
+        out = git(real, 'diff', '--cached', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD',
+                  cap=MAX_FETCH, attrs_from_seed=True)
+        if out is None:
+            raise Refused('the changes are over 2 MB (%d files)' % len([n for n in num if n]))
     finally:
         lock.close()
     if not out:
         return None
-    if len(out) > MAX_FETCH:
-        raise Refused('the changes are over 2 MB (%d files)' % len([n for n in num if n]))
+    try:  # our own look, whatever git was told to think: a diff is text or it does not travel
+        if b'\0' in out:
+            raise ValueError
+        out.decode('utf-8')
+    except ValueError:
+        raise Refused('the changes are not plain text')
     return out
 
 
