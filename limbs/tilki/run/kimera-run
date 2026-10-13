@@ -5,6 +5,8 @@
   resume NAME CWD SID [MODE] [MODEL] [TOOLS]
   seed CWD SRC    put a read copy of the work in SRC (a git worktree on this machine, tracked files at HEAD only)
                   into the seat folder CWD on the device, replacing what was there. Answers `ok FILES BYTES COMMIT`
+  fetch CWD       what a chat changed in a seeded folder, as one text diff on stdout (2 MB at most); exit 1 and
+                  `no changes` when there is none. A link or a binary file is refused by name
   sample          one JSON line of the device's memory, load, swap, temperature and each chat's resident memory
   has NAME | capture NAME [ansi] | type NAME   (text on stdin, up to 64 KiB) | key NAME KEY | kill NAME | facts NAME
 Exit codes: 0 ok/yes   1 no/failed   2 refused (one sentence on stdout)   3 device away   4 bad arguments
@@ -44,6 +46,9 @@ def check(verb, args):
         for v in args[3:]:
             if v not in MODES + MODELS + TOOLSETS: bad('unknown option value')
         return
+    if verb == 'fetch':
+        if len(args) != 1 or not PATH_RE.fullmatch(args[0]) or '..' in args[0].split('/'): bad('fetch needs CWD, an absolute path of a-z, 0-9, _ . / -')
+        return
     if verb == 'seed':
         if len(args) != 2: bad('seed needs CWD SRC')
         for v, what in ((args[0], 'CWD'), (args[1], 'SRC')):
@@ -56,7 +61,7 @@ def check(verb, args):
         if verb == 'key' and (len(extra) != 1 or extra[0] not in KEYS): bad('KEY must be one of ' + ' '.join(KEYS))
         if verb not in ('capture', 'key') and extra: bad('%s takes only NAME' % verb)
         return
-    bad('unknown verb; use admit start resume seed has capture type key kill facts sample')
+    bad('unknown verb; use admit start resume seed fetch has capture type key kill facts sample')
 
 
 def main():
@@ -75,7 +80,7 @@ def main():
         print('no such device')
         return 4
     check(verb, args)
-    if verb in ('start', 'resume', 'admit', 'seed') and not row.get('chat'):
+    if verb in ('start', 'resume', 'admit', 'seed', 'fetch') and not row.get('chat'):
         print(row.get('why_not', 'this device does not take chats'))
         return 2
     run = row.get('run') or {}
@@ -124,7 +129,7 @@ def main():
                 print('git could not pack the work')
                 return 1
         else:
-            r = subprocess.run(cmd, input=data, capture_output=True, timeout=60 if verb in ('start', 'resume') else 30)
+            r = subprocess.run(cmd, input=data, capture_output=True, timeout=60 if verb in ('start', 'resume', 'fetch') else 30)
     except subprocess.TimeoutExpired:
         r = None
         if feed:

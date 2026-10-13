@@ -9,6 +9,7 @@ checked against a fixed shape first, and tmux/claude are started with argument l
   resume NAME CWD SID [MODE] [MODEL] [TOOLS]
   has NAME | capture NAME [ansi] | type NAME (text on stdin) | key NAME KEY | kill NAME | facts NAME
   seed CWD COMMIT (a tar of the work on stdin): a read copy of the work in the seat folder, replacing what was there
+  fetch CWD: what a chat changed in a seeded folder since the seed, as one text diff (2 MB at most)
   sample          one JSON line: memory, load, swap, temperature, and each running chat's resident memory
 
 Answers on stdout, one line (or the pane / one JSON object). Exit codes:
@@ -26,6 +27,7 @@ SOCK = 'aiden'
 MAX_TYPE = 64 * 1024
 MAX_CAPTURE = 256 * 1024
 MAX_SEED, MAX_SEED_FILES = 200 << 20, 20000
+MAX_FETCH = 2 << 20
 COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
 NAME_RE = re.compile(r'^aiden-[a-z0-9-]{8,36}$')
 SID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
@@ -184,6 +186,8 @@ def seed(args):
     if not COMMIT_RE.fullmatch(commit):
         raise Bad('COMMIT must be 40 hex digits')
     c = conf()
+    if not c.get('chat', True):  # the same gate as a start: a device that takes no chats takes no work either
+        raise Refused(c.get('why_not', 'this device does not take chats'))
     under_root(c, cwd)
     real = os.path.realpath(cwd)
     under_root(c, real)
@@ -218,7 +222,7 @@ def unpack(c, real, commit, spool):
     for line in (r.stdout.splitlines() if r.returncode == 0 else []):
         n, _, path = line.partition('\t')
         at = os.path.realpath(path) if path else ''
-        if n.startswith('aiden-') and (at == real or at.startswith(real + '/')):
+        if n.startswith('aiden-') and at and (at == real or at.startswith(real + '/') or real.startswith(at + '/')):
             raise Refused('a chat runs in that folder; stop it before seeding')
     try:
         tar = tarfile.open(spool, mode='r:')
@@ -242,11 +246,19 @@ def unpack(c, real, commit, spool):
         if total > MAX_SEED:
             raise Refused('the work is over 200 MB')
     os.makedirs(os.path.dirname(real), mode=0o700, exist_ok=True)
+    st = os.statvfs(os.path.dirname(real))
+    floor = c['limits'].get('disk_gb', 3) << 30
+    if st.f_bavail * st.f_frsize - total < floor:  # the disk floor of admission holds for seeded work too
+        raise Refused('not enough disk for this work (the device keeps %d GB free)' % c['limits'].get('disk_gb', 3))
     new, old = real + '.seed-new', real + '.seed-old'
-    for leftover in (new, old):
-        shutil.rmtree(leftover, ignore_errors=True)
-    os.makedirs(new, mode=0o700)
     try:
+        for leftover in (new, old):
+            if os.path.islink(leftover):  # never follow a link someone put where we build
+                os.remove(leftover)
+            shutil.rmtree(leftover, ignore_errors=True)
+        os.mkdir(new, 0o700)
+        if os.path.islink(new) or os.path.realpath(new) != new:
+            raise OSError('the building place is not a plain folder')
         for m in take:
             dest = os.path.join(new, m.name)
             os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
@@ -263,7 +275,72 @@ def unpack(c, real, commit, spool):
             os.rename(old, real)
         raise Refused('the device could not write the work (%s)' % e.__class__.__name__)
     shutil.rmtree(old, ignore_errors=True)
+    baseline(real)
     return len(take), total, skipped, commit
+
+
+def base_of(real):
+    return os.path.join(HOME, 'kimera', 'seeds', hashlib.sha256(real.encode()).hexdigest()[:24] + '.git')
+
+
+def git(real, *a, **kw):
+    """git on the seat folder with its record kept OUTSIDE the folder, and nothing of the user's or the system's
+    configuration: no hooks, no outside diff program, no text conversion."""
+    env = dict(os.environ, GIT_CONFIG_GLOBAL='/dev/null', GIT_CONFIG_NOSYSTEM='1', GIT_TERMINAL_PROMPT='0')
+    return subprocess.run(['git', '--git-dir=' + base_of(real), '--work-tree=' + real, '-c', 'core.hooksPath=/dev/null',
+                           '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null', '-c', 'user.name=kimera',
+                           '-c', 'user.email=kimera@localhost', '-c', 'core.quotePath=false'] + list(a),
+                          capture_output=True, env=env, cwd=real, **kw)
+
+
+def baseline(real):
+    """Remember what was laid down, so `fetch` can say what a chat changed. A device without git still seeds;
+    it only cannot fetch."""
+    base = base_of(real)
+    shutil.rmtree(base, ignore_errors=True)
+    try:
+        os.makedirs(os.path.dirname(base), mode=0o700, exist_ok=True)
+        ok = all(git(real, *a).returncode == 0 for a in (('init', '-q'), ('add', '-A'), ('commit', '-q', '--allow-empty', '-m', 'seeded')))
+    except OSError:
+        ok = False
+    if not ok:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+def fetch(args):
+    """fetch CWD: what changed in the seat folder since it was seeded, as one text diff on stdout.
+    Only plain text files come back: a link, a binary file or a diff over 2 MB is refused by name."""
+    if len(args) != 1:
+        raise Bad('fetch needs CWD')
+    c = conf()
+    if not c.get('chat', True):
+        raise Refused(c.get('why_not', 'this device does not take chats'))
+    under_root(c, args[0])
+    real = os.path.realpath(args[0])
+    under_root(c, real)
+    if not os.path.isdir(real) or not os.path.isdir(base_of(real)):
+        raise Refused('that folder was not seeded here, or this device has no git')
+    lock = take_lock()
+    try:
+        if git(real, 'add', '-A').returncode != 0:
+            raise Refused('the device could not read the folder')
+        raw = git(real, 'diff', '--cached', '--raw', '--no-renames', '-z', 'HEAD').stdout.decode('utf-8', 'replace').split('\0')
+        odd = [raw[i + 1] for i in range(0, len(raw) - 1, 2)
+               if not all(m in ('000000', '100644', '100755') for m in raw[i].lstrip(':').split()[:2])]
+        if odd:
+            raise Refused('not a plain file, so it cannot come back: %s' % ', '.join(odd[:5]))
+        num = git(real, 'diff', '--cached', '--numstat', '--no-renames', '-z', 'HEAD').stdout.decode('utf-8', 'replace').split('\0')
+        binary = [n.split('\t', 2)[2] for n in num if n.startswith('-\t-\t')]
+        if binary:
+            raise Refused('a binary file cannot come back: %s' % ', '.join(binary[:5]))
+        out = git(real, 'diff', '--cached', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD').stdout
+    finally:
+        lock.close()
+    if not out:
+        return None
+    if len(out) > MAX_FETCH:
+        raise Refused('the changes are over 2 MB (%d files)' % len([n for n in num if n]))
+    return out
 
 
 def launch(verb, args):
@@ -435,6 +512,13 @@ def run(verb, args, data):
         files, size, skipped, commit = seed(args)
         audit('seeded', args[0], 'files=%d bytes=%d links_left_out=%d commit=%s' % (files, size, skipped, commit))
         print('ok %d %d %s' % (files, size, commit))
+        return 0
+    if verb == 'fetch':
+        out = fetch(args)
+        if out is None:
+            print('no changes')
+            return 1
+        sys.stdout.buffer.write(out)
         return 0
     name = need_name(args)
     if verb == 'has':

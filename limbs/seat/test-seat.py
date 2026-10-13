@@ -38,6 +38,9 @@ def check(label, cond):
 def call(cmd, data=b''):
     os.environ['SSH_ORIGINAL_COMMAND'] = cmd
     out = io.StringIO(); so = sys.stdout; sys.stdout = out
+    class Raw:  # the program writes bytes for capture and fetch
+        write = staticmethod(lambda b: out.write(b.decode('utf-8', 'replace')))
+    out.buffer = Raw
     try:
         class In: buffer = io.BytesIO(data)
         si = sys.stdin; sys.stdin = In
@@ -124,8 +127,49 @@ S.MAX_SEED = 200 << 20
 open(sess, 'w').write('aiden-busy0001\t%s\n' % work)
 check('seed is refused while a chat runs in that folder', call(f'seed {work} {C}', tar_of([('a', b'x', 'file')]))[0] == 2 and os.listdir(work) == ['only.txt'])
 open(sess, 'w').close()
+open(sess, 'w').write('aiden-busy0002\t%s\n' % root)
+check('seed is refused under a folder a chat runs in', call(f'seed {work}/deeper {C}', tar_of([('a', b'x', 'file')]))[0] == 2)
+open(sess, 'w').close()
+_cfg = json.load(open(seatdir + '/seat.json'))
+json.dump(dict(_cfg, limits=dict(_cfg['limits'], disk_gb=10 ** 6)), open(seatdir + '/seat.json', 'w'))
+check('seed keeps the device\'s disk floor', call(f'seed {work} {C}', tar_of([('a', b'x', 'file')]))[0] == 2 and os.listdir(work) == ['only.txt'])
+json.dump(dict(_cfg, chat=False, why_not='no chats here'), open(seatdir + '/seat.json', 'w'))
+check('a device that takes no chats takes no work', call(f'seed {work} {C}', tar_of([('a', b'x', 'file')])) == (2, 'no chats here'))
+json.dump(_cfg, open(seatdir + '/seat.json', 'w'))
+os.symlink('/etc', work + '.seed-new')
+rc, out = call(f'seed {work} {C}', tar_of([('fresh.txt', b'x', 'file')]))
+check('a link planted where the work is built is not followed', rc == 0 and os.listdir(work) == ['fresh.txt'] and not os.path.exists('/etc/fresh.txt'))
+call(f'seed {work} {C}', tar_of([('only.txt', b'x', 'file')]))
 check('seed leaves no spool file behind', not [f for f in os.listdir(os.path.join(tmp, 'kimera')) if f.startswith('seed.')])
 check('seed is in the audit log', 'seeded' in open(S.LOG).read())
+
+# fetch: what a chat changed in a seeded folder comes back as a text diff
+back = root + '/builder'
+call(f'seed {back} {C}', tar_of([('a.txt', b'one\ntwo\n', 'file'), ('.gitignore', b'target/\n', 'file')]))
+check('fetch says no changes right after a seed', call(f'fetch {back}') == (1, 'no changes'))
+open(back + '/a.txt', 'w').write('one\n2\n'); open(back + '/new.txt', 'w').write('fresh\n')
+os.makedirs(back + '/target'); open(back + '/target/big.o', 'wb').write(b'\0' * 100)
+rc, out = call(f'fetch {back}')
+check('fetch gives the edit and the new file as one diff', rc == 0 and '-two' in out and '+2' in out and '+++ b/new.txt' in out and '+fresh' in out)
+check('fetch leaves out what the work itself ignores', 'target' not in out)
+p0 = subprocess.run(['git', 'init', '-q', tmp + '/apply'], capture_output=True)
+open(tmp + '/apply/a.txt', 'w').write('one\ntwo\n')
+ap = subprocess.run(['git', '-C', tmp + '/apply', 'apply', '--check', '-'], input=out + '\n', capture_output=True, text=True)
+check('the diff applies with git apply --check', ap.returncode == 0)
+os.symlink('/etc/passwd', back + '/ln')
+rc, out = call(f'fetch {back}')
+check('fetch refuses a link by name', rc == 2 and 'ln' in out)
+os.remove(back + '/ln'); open(back + '/pic.bin', 'wb').write(bytes(range(256)) * 4)
+rc, out = call(f'fetch {back}')
+check('fetch refuses a binary file by name', rc == 2 and 'pic.bin' in out)
+os.remove(back + '/pic.bin'); S.MAX_FETCH = 20
+check('fetch refuses changes over the size limit', call(f'fetch {back}')[0] == 2)
+S.MAX_FETCH = 2 << 20
+os.makedirs(root + '/never'); check('fetch refuses a folder that was not seeded', call(f'fetch {root}/never')[0] == 2)
+check('fetch refuses a folder outside the roots', call('fetch /etc')[0] == 2)
+check('the record of the seed is kept outside the seat folder', not os.path.exists(back + '/.git') and os.listdir(os.path.join(tmp, 'kimera', 'seeds')))
+call(f'seed {back} {C}', tar_of([('a.txt', b'one\ntwo\n', 'file')]))
+check('seeding again starts the comparison afresh', call(f'fetch {back}') == (1, 'no changes'))
 
 # a device with a mode allow-list, a memory box and a private tmux (Kirpi's shape)
 S.sessions = lambda: []

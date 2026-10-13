@@ -3,6 +3,11 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.6.0 (2026-10-13)
+
+- `fetch`, the twelfth verb: what a chat changed in a seeded folder since the seed, as one text diff (2 MB at most). A link or a binary file is refused by name, and what the work itself ignores is left out. The record of what was seeded is a git repository kept outside the seat folder; git runs with no hooks, no outside diff program and none of the user's configuration. The caller applies the diff itself; nothing in it is run.
+- Found by review of 0.5.0: a device that takes no chats now refuses work as well; seeded work may not push free disk under the device's floor; a seed is refused under or above a folder a chat runs in; a link planted where the new folder is built is removed, never followed.
+
 ## 0.5.0 (2026-10-13)
 
 - `seed`, the eleventh verb: a read copy of a git worktree (tracked files at HEAD only) is put in the seat folder on the device. The work streams from git and is spooled to disk on the device. Only plain files and folders are taken; a path that leaves the folder, more than 20,000 files or 200 MB, the seat root itself, or a folder a chat runs in is refused. The new folder is built beside the old one and swapped in.
