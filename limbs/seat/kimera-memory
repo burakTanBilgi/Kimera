@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3 -I
 """kimera-memory: ask the owner's memory from one of his own devices. Read-only.
 
   kimera-memory recall WORDS...     what the memory holds about these words; a last line "silent" means nothing was strong

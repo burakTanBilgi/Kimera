@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.6 (2026-10-14)
+
+- Found by review of 0.12.5: the memory command's folder comes before the other added folders and is left off if the bare name would reach any other program; the command runs Python isolated (`-I`), so no module beside it or in the user's folders is loaded.
+
 ## 0.12.5 (2026-10-14)
 
 - Found by review of 0.12.4: the folder with the memory command is put on a chat's PATH only if its one entry is the installer's link and the program behind it has the sha256 recorded at install.
