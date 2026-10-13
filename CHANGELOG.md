@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.2 (2026-10-13)
+
+- Found by review: each ask runs in a new folder with a random name, the surroundings are checked before and after the run and an answer is thrown away if anything appeared meanwhile, paths are taken with links resolved, and no skill is offered to an ask.
+
 ## 0.12.1 (2026-10-13)
 
 - Found by review of 0.12.0: an ask runs in a private, empty folder outside every seat root and is refused if any instruction file could reach it; and it keeps no transcript on the device.
