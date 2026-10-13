@@ -721,8 +721,14 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     # dropped there must not be able to stand in for git, ls or sh in the chats that come after.
     # Set on the command itself: a variable given to tmux does not survive the memory box's systemd-run.
     extra = ([os.path.join(HOME, 'kimera/node/bin')] if c.get('node') else []) + [os.path.join(HOME, '.cargo/bin')]
-    if c.get('memory_port'):  # so a chat asks the memory by its bare name: AIDEN's rules refuse a program named by a path
-        extra.append(os.path.join(HOME, 'kimera/bin'))
+    # So a chat asks the memory by its bare name (AIDEN's rules refuse a program named by a path). A folder of its own
+    # that holds that one name and nothing else: the seat's bin folder would also put kimera-seat on the PATH.
+    cmds = os.path.join(HOME, 'kimera/cmd')
+    try:
+        if c.get('memory_port') and not os.path.islink(cmds) and os.listdir(cmds) == ['kimera-memory']:
+            extra.append(cmds)
+    except OSError:
+        pass
     extra = [d for d in extra if os.path.isdir(d)]
     if extra:
         cmd = ['env', 'PATH=%s:%s' % (os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'), ':'.join(extra))] + cmd

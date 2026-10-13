@@ -32,6 +32,8 @@ done
 "${SSH[@]}" "cat > ~/kimera/bin/kimera-rrsync" < "$HERE/../../seat/kimera-rrsync"
 "${SSH[@]}" "cat > ~/kimera/bin/kimera-memory" < "$HERE/../../seat/kimera-memory"
 "${SSH[@]}" "chmod 755 ~/kimera/bin/kimera-seat ~/kimera/bin/kimera-rrsync ~/kimera/bin/kimera-memory"
+# the one name a chat may call bare: a folder of its own, so the seat's other programs are not on a chat's PATH
+"${SSH[@]}" "mkdir -p ~/kimera/cmd && chmod 755 ~/kimera/cmd && ln -sfn ../bin/kimera-memory ~/kimera/cmd/kimera-memory"
 "${SSH[@]}" "cat > ~/.config/kimera/seat/seat.json" <<<"$SEATJSON"
 "${SSH[@]}" "printf '%s\n' '{\"mcpServers\":{}}' > ~/.config/kimera/seat/mcp-empty.json"
 # settings.json (hooks, plugins off) is AIDEN's content; keep what is there, create a plugins-off base once.
