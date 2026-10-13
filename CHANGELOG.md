@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.5 (2026-10-14)
+
+- Found by review of 0.12.4: the folder with the memory command is put on a chat's PATH only if its one entry is the installer's link and the program behind it has the sha256 recorded at install.
+
 ## 0.12.4 (2026-10-14)
 
 - Found by review of 0.12.3: only the memory command is put on a chat's PATH, in a folder of its own that is left off if it holds anything else; the seat's other programs are not.

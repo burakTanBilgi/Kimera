@@ -7,8 +7,8 @@ set -euo pipefail
 DEV="${1:?device name from devices.json}"
 HERE="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 CONF="${KIMERA_DEVICES:-$HOME/.config/kimera/devices.json}"
-eval "$(python3 - "$CONF" "$DEV" <<'P'
-import json, shlex, sys
+eval "$(python3 - "$CONF" "$DEV" "$HERE/../../seat/kimera-memory" <<'P'
+import hashlib, json, shlex, sys
 r = json.load(open(sys.argv[1]))[sys.argv[2]]
 print('SSH=(%s)' % ' '.join(shlex.quote(x) for x in r['ssh']))
 print('CFG=%s' % shlex.quote(r['config_dir']))
@@ -18,7 +18,7 @@ print('PORT=%d' % r['hook_port'])
 print('TOKEN=%s' % shlex.quote(r['hook_token_file']))
 print('CHAT=%s' % ('1' if r.get('chat') else '0'))
 print('MPORT=%d' % int(r.get('memory_port') or 0))
-print('SEATJSON=%s' % shlex.quote(json.dumps({k: r.get(k) for k in ('chat', 'why_not', 'seat_roots', 'config_dir', 'claude', 'limits', 'modes', 'box_mb', 'tmux', 'tools_force', 'node', 'working', 'card', 'pull_roots', 'memory_port', 'memory_token_file', 'ask')} | {'hook_port': r['hook_port'], 'hook_token_file': r['hook_token_file']})))
+print('SEATJSON=%s' % shlex.quote(json.dumps({k: r.get(k) for k in ('chat', 'why_not', 'seat_roots', 'config_dir', 'claude', 'limits', 'modes', 'box_mb', 'tmux', 'tools_force', 'node', 'working', 'card', 'pull_roots', 'memory_port', 'memory_token_file', 'ask')} | {'hook_port': r['hook_port'], 'hook_token_file': r['hook_token_file'], 'memory_sha256': hashlib.sha256(open(sys.argv[3], 'rb').read()).hexdigest()})))
 P
 )"
 HOME_D="$("${SSH[@]}" 'printf %s "$HOME"')"
