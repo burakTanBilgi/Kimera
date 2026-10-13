@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.10.1 (2026-10-13)
+
+- Found by review of 0.9.3: organization plugins are switched off by the seat at every start, from the plugin folders that could actually load, not from a list written at install time.
+
 ## 0.10.0 (2026-10-13)
 
 - `pull`, the thirteenth verb: one plain file (a built program, say) from a seat folder or a named build folder is brought to the calling machine and kept unrunnable under a name that starts with its sha256. It is never run by Kimera. The file is reached by folder handle and never through a link; 64 MB a file.

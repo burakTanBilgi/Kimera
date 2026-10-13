@@ -605,6 +605,31 @@ def launch(verb, args):
     return started
 
 
+def synced_plugins(config_dir):
+    """The names of the organization plugins this config could load: read from the plugin folders themselves and
+    from the usage list. Only names of a plain shape are taken."""
+    names = set()
+    root = os.path.join(config_dir, 'plugins', 'synced')
+    try:
+        for org in os.listdir(root):
+            for one in os.listdir(os.path.join(root, org)):
+                try:
+                    n = json.load(open(os.path.join(root, org, one, '.claude-plugin', 'plugin.json'))).get('name')
+                except (OSError, ValueError, AttributeError):
+                    continue
+                if isinstance(n, str):
+                    names.add(n)
+    except OSError:
+        pass
+    try:
+        for k in json.load(open(os.path.join(config_dir, '.claude.json'))).get('pluginUsage', {}):
+            if k.endswith('@synced'):
+                names.add(k[:-len('@synced')])
+    except (OSError, ValueError, AttributeError):
+        pass
+    return sorted(n for n in names if re.fullmatch(r'[A-Za-z0-9._-]{1,80}', n))
+
+
 def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     real = os.path.realpath(cwd)
     under_root(c, real)  # a symlink inside a root must not lead out of it
@@ -617,6 +642,21 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     if not os.path.exists(pristine):
         raise Refused('the seat settings have no pristine copy; run install-device.sh for this device')
     want = open(pristine).read()
+    # The account's organization plugins are off for a seat chat, decided here at every start and from what could
+    # actually load: every plugin found in the config's synced folder now, plus every one its usage list names.
+    # An empty enabledPlugins does not keep one out; only `"name@synced": false` does. So a plugin synced to the
+    # account after the last install is off too, and a list a chat has trimmed does not turn one back on.
+    try:
+        base = json.loads(want)
+        if not isinstance(base, dict):
+            raise ValueError
+    except ValueError:
+        raise Refused('the pristine seat settings are not valid JSON; run install-device.sh for this device')
+    off = dict(base.get('enabledPlugins') or {})
+    for name in synced_plugins(c['config_dir']):
+        off[name + '@synced'] = False
+    base['enabledPlugins'] = off
+    want = json.dumps(base, indent=1)
     cur = os.path.join(seat, 'settings.json')
     if not os.path.exists(cur) or open(cur).read() != want:
         if os.path.exists(cur):
