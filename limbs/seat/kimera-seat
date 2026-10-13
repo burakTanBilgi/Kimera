@@ -10,6 +10,7 @@ checked against a fixed shape first, and tmux/claude are started with argument l
   has NAME | capture NAME [ansi] | type NAME (text on stdin) | key NAME KEY | kill NAME | facts NAME
   seed CWD COMMIT (a tar of the work on stdin): a read copy of the work in the seat folder, replacing what was there
   fetch CWD: what a chat changed in a seeded folder since the seed, as one text diff (2 MB at most)
+  pull CWD FILE: one finished file from a seat folder (a built program, say), raw on stdout, 64 MB at most
   sample          one JSON line: memory, load, swap, temperature, and each running chat's resident memory
 
 Answers on stdout, one line (or the pane / one JSON object). Exit codes:
@@ -28,6 +29,8 @@ MAX_TYPE = 64 * 1024
 MAX_CAPTURE = 256 * 1024
 MAX_SEED, MAX_SEED_FILES = 200 << 20, 20000
 MAX_FETCH = 2 << 20
+MAX_PULL = 64 << 20
+REL_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$')
 import unicodedata
 COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
 NAME_RE = re.compile(r'^aiden-[a-z0-9-]{8,36}$')
@@ -499,6 +502,50 @@ def card(c, working, box_mb, hold):
     return plain(text, 2000)
 
 
+def pull(args):
+    """pull CWD FILE: the bytes of one plain file under a seat folder, for the caller to keep. FILE is a path inside
+    CWD with no step upward. The file is reached by folder handle, one step at a time, never following a link, so
+    nothing a chat arranges in its folder can make this send a file from elsewhere on the device."""
+    if len(args) != 2:
+        raise Bad('pull needs CWD FILE')
+    c = conf()
+    if not c.get('chat', True):
+        raise Refused(c.get('why_not', 'this device does not take chats'))
+    # a finished program may also lie in a build folder the device row names (`pull_roots`), not only in a seat folder
+    where = dict(c, seat_roots=list(c['seat_roots']) + list(c.get('pull_roots', [])))
+    under_root(where, args[0])
+    real = os.path.realpath(args[0])
+    under_root(where, real)
+    if not REL_RE.fullmatch(args[1]) or len(args[1]) > 400:
+        raise Bad('FILE must be a path inside the folder, of a-z, 0-9, _ . - and /, with no step upward')
+    try:
+        at = os.open(real, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        parts = args[1].split('/')
+        for part in parts[:-1]:
+            nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=at)
+            os.close(at)
+            at = nxt
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=at)
+        os.close(at)
+    except OSError:
+        raise Refused('there is no such plain file in that folder')
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):  # judged on what was opened, before anything is read
+        os.close(fd)
+        raise Refused('there is no such plain file in that folder')
+    with os.fdopen(fd, 'rb') as f:
+        if st.st_size > MAX_PULL:
+            raise Refused('that file is over 64 MB')
+        left = st.st_size  # exactly the size seen at the open, even if the file grows while it is read
+        while left > 0:
+            chunk = f.read(min(1 << 20, left))
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
+            left -= len(chunk)
+    return st.st_size
+
+
 def launch(verb, args):
     if len(args) < 3:
         raise Bad('%s needs NAME CWD SID [MODE] [MODEL] [TOOLS]' % verb)
@@ -712,6 +759,10 @@ def run(verb, args, data):
         files, size, skipped, commit = seed(args)
         audit('seeded', args[0], 'files=%d bytes=%d links_left_out=%d commit=%s' % (files, size, skipped, commit))
         print('ok %d %d %s' % (files, size, commit))
+        return 0
+    if verb == 'pull':
+        size = pull(args)
+        audit('pulled', args[0], 'file=%s bytes=%d' % (args[1], size))
         return 0
     if verb == 'fetch':
         out = fetch(args)

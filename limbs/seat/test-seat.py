@@ -236,6 +236,28 @@ check('the record of the seed is kept outside the seat folder', not os.path.exis
 call(f'seed {back} {C}', tar_of([('a.txt', b'one\ntwo\n', 'file')]))
 check('seeding again starts the comparison afresh', call(f'fetch {back}') == (1, 'no changes'))
 
+# pull: one finished file comes out of a seat folder, by folder handle, never through a link
+built = root + '/build'; os.makedirs(built + '/target/release')
+open(built + '/target/release/prog', 'wb').write(b'\x7fELF' + bytes(range(256)))
+rc, out = call(f'pull {built} target/release/prog')
+check('pull sends the bytes of one file', rc == 0 and len(out.encode('utf-8', 'replace')) > 100 and 'ELF' in out)
+check('pull is in the audit log', 'pulled' in open(S.LOG).read() and 'file=target/release/prog' in open(S.LOG).read())
+os.symlink('/etc/passwd', built + '/target/release/leak'); os.symlink('/etc', built + '/target/etc')
+check('pull refuses a link to a file', call(f'pull {built} target/release/leak')[0] == 2)
+check('pull refuses a path through a linked folder', call(f'pull {built} target/etc/passwd')[0] == 2)
+check('pull refuses a step upward', call(f'pull {built} ../a.txt')[0] == 4 and call(f'pull {built} target/../../x')[0] == 4)
+check('pull refuses a folder', call(f'pull {built} target/release')[0] == 2)
+check('pull refuses a missing file', call(f'pull {built} target/release/nope')[0] == 2)
+check('pull refuses a folder outside the roots', call('pull /etc passwd')[0] == 2)
+S.MAX_PULL = 10
+check('pull refuses a file over the limit', call(f'pull {built} target/release/prog')[0] == 2)
+S.MAX_PULL = 64 << 20
+other = os.path.join(tmp, 'elsewhere'); os.makedirs(other); open(other + '/tool', 'w').write('x')
+check('a build folder outside the seat roots is refused unless the row names it', call(f'pull {other} tool')[0] == 2)
+_c = json.load(open(seatdir + '/seat.json')); json.dump(dict(_c, pull_roots=[other]), open(seatdir + '/seat.json', 'w'))
+check('a build folder the row names may be pulled from, and only pulled from', call(f'pull {other} tool') == (0, 'x') and call(f'seed {other}/s {C}', tar_of([('a', b'x', 'file')]))[0] == 2)
+json.dump(_c, open(seatdir + '/seat.json', 'w'))
+
 # a device with a mode allow-list, a memory box and a private tmux (Kirpi's shape)
 S.sessions = lambda: []
 cfg = json.load(open(seatdir + '/seat.json'))

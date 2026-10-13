@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.10.0 (2026-10-13)
+
+- `pull`, the thirteenth verb: one plain file (a built program, say) from a seat folder or a named build folder is brought to the calling machine and kept unrunnable under a name that starts with its sha256. It is never run by Kimera. The file is reached by folder handle and never through a link; 64 MB a file.
+
 ## 0.9.3 (2026-10-13)
 
 - The account's organization plugins are off for seat chats. An empty `enabledPlugins` does not keep a synced plugin out; an explicit `"name@synced": false` does, so the installer sets that for every synced plugin the device knows.
