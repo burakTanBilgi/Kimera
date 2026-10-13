@@ -1,36 +1,84 @@
 {
   "_note": "An example with made-up users and hosts. Copy it to ~/.config/kimera/devices.json and fill in your own. One row per device; a new device is one more row. Values are paths and limits, never secrets.",
   "caretta": {
-    "ssh": ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "USER@HOST"],
+    "ssh": [
+      "ssh",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=8",
+      "USER@HOST"
+    ],
     "chat": true,
-    "seat_roots": ["/home/USER/seats"],
-    "seed_roots": ["~/work/worktrees"],
-    "pack_roots": ["~/work/memory-packs"],
+    "seat_roots": [
+      "/home/USER/seats"
+    ],
+    "seed_roots": [
+      "~/work/worktrees"
+    ],
+    "pack_roots": [
+      "~/work/memory-packs"
+    ],
     "config_dir": "/home/USER/.claude",
     "claude": "/home/USER/.local/bin/claude",
     "hook_port": 8732,
     "hook_token_file": "/home/USER/.config/kimera/hook-token",
-    "limits": {"avail_mb": 1500, "disk_gb": 3, "max_chats": 1},
-    "mirror_dir": "~/.local/share/kimera/mirror/caretta/claude/projects"
+    "limits": {
+      "avail_mb": 1500,
+      "disk_gb": 3,
+      "max_chats": 1
+    },
+    "mirror_dir": "~/.local/share/kimera/mirror/caretta/claude/projects",
+    "card": "You are running on Caretta, one of the owner's own machines: a 2013 MacBook Air with 2 cores (4 threads) and 3.8 GB of memory, started here by AIDEN through Kimera's door. Work to its size: one heavy job at a time, never a build and a test run together, at most 2 parallel jobs (-j2), and expect a full build to take minutes. It runs hot; a new chat is refused above 85 C."
   },
   "kirpi": {
-    "ssh": ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "USER@HOST"],
+    "ssh": [
+      "ssh",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=8",
+      "USER@HOST"
+    ],
     "chat": true,
-    "why_not": "Kirpi takes one read-only chat (plan mode, a 500 MB box) when 650 MB is free; the local model keeps the rest.",
-    "seat_roots": ["/home/USER/seats"],
-    "seed_roots": ["~/work/worktrees"],
-    "pack_roots": ["~/work/memory-packs"],
+    "why_not": "Kirpi takes one chat: a reading one (plan mode, 500 MB) beside its local model, or a working one (1800 MB) with the large model parked and its work waiting.",
+    "seat_roots": [
+      "/home/USER/seats"
+    ],
+    "seed_roots": [
+      "~/work/worktrees"
+    ],
+    "pack_roots": [
+      "~/work/memory-packs"
+    ],
     "config_dir": "/home/USER/.claude",
     "claude": "/home/USER/.local/bin/claude",
     "hook_port": 8732,
     "hook_token_file": "/home/USER/.config/kimera/hook-token",
-    "limits": {"avail_mb": 650, "disk_gb": 3, "max_chats": 1},
+    "limits": {
+      "avail_mb": 650,
+      "disk_gb": 3,
+      "max_chats": 1
+    },
     "mirror_dir": "~/.local/share/kimera/mirror/kirpi/claude/projects",
-    "modes": ["plan"],
+    "modes": [
+      "plan"
+    ],
     "box_mb": 500,
     "tmux": true,
     "node": true,
     "rsync": true,
-    "tools_force": "Read,Grep,Glob"
+    "tools_force": "Read,Grep,Glob",
+    "card": "You are running on Kirpi, one of the owner's own machines: a small laptop with 4 cores, 3.7 GB of memory and no graphics card, started here by AIDEN through Kimera's door. It also keeps a local language model that other work depends on, so memory is the scarce thing here.",
+    "working": {
+      "box_mb": 1800,
+      "avail_mb": 2300,
+      "frees_mb": 2000,
+      "hold_minutes": 120,
+      "modes": [
+        "acceptEdits",
+        "auto"
+      ]
+    }
   }
 }

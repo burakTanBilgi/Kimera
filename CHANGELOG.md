@@ -3,6 +3,13 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.9.0 (2026-10-13)
+
+- A working class on the 4 GB machine: a start in a mode that can write takes a lease from the job switch, which parks the large model (the small search model stays up) and gives the chat an 1800 MB box. The model's work waits and is owed a turn: a `wake` during the chat is answered `queued`, and the model loads by itself when the chat ends. Nothing is killed while nobody waits; with someone waiting, the chat is stopped at 120 minutes and can be resumed.
+- `sample` says what a device takes now: `none`, `light` or `working`.
+- Each chat is told what machine it is on, its memory limit, how its work goes back, and how to work to that size.
+- Not yet checked on the real machine end to end.
+
 ## 0.8.5 (2026-10-13)
 
 - Found by review of 0.8.4: the added folders go at the end of a chat's PATH, not the start, so a program dropped there by one chat cannot stand in for `git` or `sh` in later chats.

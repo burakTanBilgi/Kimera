@@ -17,7 +17,7 @@ print('CLAUDE=%s' % shlex.quote(r['claude']))
 print('PORT=%d' % r['hook_port'])
 print('TOKEN=%s' % shlex.quote(r['hook_token_file']))
 print('CHAT=%s' % ('1' if r.get('chat') else '0'))
-print('SEATJSON=%s' % shlex.quote(json.dumps({k: r.get(k) for k in ('chat', 'why_not', 'seat_roots', 'config_dir', 'claude', 'limits', 'modes', 'box_mb', 'tmux', 'tools_force', 'node')} | {'hook_port': r['hook_port'], 'hook_token_file': r['hook_token_file']})))
+print('SEATJSON=%s' % shlex.quote(json.dumps({k: r.get(k) for k in ('chat', 'why_not', 'seat_roots', 'config_dir', 'claude', 'limits', 'modes', 'box_mb', 'tmux', 'tools_force', 'node', 'working', 'card')} | {'hook_port': r['hook_port'], 'hook_token_file': r['hook_token_file']})))
 P
 )"
 HOME_D="$("${SSH[@]}" 'printf %s "$HOME"')"

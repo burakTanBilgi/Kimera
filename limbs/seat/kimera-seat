@@ -156,11 +156,12 @@ def snapshot():
                 chats=max(chats, len(sessions())))
 
 
-def admission(c):
+def admission(c, avail_mb=None):
+    """None, or the one sentence why not. avail_mb: the memory floor of the class asked for, if not the device's own."""
     if not c.get('chat', True):
         return c.get('why_not', 'this device does not take chats')
     s = snapshot()
-    L = c['limits']
+    L = dict(c['limits'], **({'avail_mb': avail_mb} if avail_mb else {}))
     if not os.path.isdir(c['config_dir']):
         return 'Claude Code is not logged in here'
     if s['chats'] >= L['max_chats']:
@@ -448,6 +449,56 @@ def fetch(args):
     return out
 
 
+def job(*a):
+    """Ask the device's job switch (the local model's keeper), if this device has one. The answer, or None."""
+    exe = os.path.join(HOME, 'kimera/bin/kimera-job')
+    try:
+        r = subprocess.run([exe] + list(a), capture_output=True, text=True, timeout=200)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+        return None
+
+
+def takes(c):
+    """What kind of chat this device would take right now: 'working' (may edit and run commands), 'light' (reads
+    only) or 'none'. A device with a `working` class and a local model offers working only when the model can be
+    parked for it: nobody holds the machine, the model is not answering, and it is not owed a turn."""
+    if not c.get('chat', True) or snapshot()['chats'] >= c['limits']['max_chats']:
+        return 'none'
+    w = c.get('working')
+    if w:
+        st = job('status')
+        if st and not st.get('lease') and not st.get('busy') and st.get('job') != 'see' and not st.get('waiting'):
+            freed = w.get('frees_mb', 0) if st.get('state') != 'off' else 0  # what parking the model would give back
+            if not admission(c, avail_mb=max(w['avail_mb'] - freed, 1)):
+                return 'working'
+    if admission(c):
+        return 'none'
+    return 'light' if (w or c.get('tools_force')) else 'working'
+
+
+CARD_LIGHT = ('This chat only reads: you have Read, Grep and Glob, no shell and no edits, and %d MB of memory. Answer from '
+              'the files in this folder and say plainly what you could not check.')
+CARD_WORK = ('This chat may edit and run commands. Your changes go back as a text diff: plain text files only, under '
+             '2 MB each, no binary files and no invisible characters; what the project ignores (build output) stays '
+             'behind. This folder is a copy of the work, not a git repository: do not use git here.')
+CARD_BOX = (' You have %d MB of memory in all: a command that needs more is killed and this chat with it. Do not run a full '
+            'build or the whole test suite here; check one crate or one file at a time, one job at a time. The local '
+            'model of this machine is parked for you and its work waits: reach a point you can resume from within %d '
+            'minutes, after which this chat may be stopped and resumed later.')
+
+
+def card(c, working, box_mb, hold):
+    """What a chat is told about the machine it runs on, so it works to the machine's size as it would at home."""
+    text = c.get('card', '').strip()
+    if not text:
+        return None
+    text += ' ' + (CARD_WORK if working else CARD_LIGHT % box_mb)
+    if working and box_mb:
+        text += CARD_BOX % (box_mb, hold)
+    return plain(text, 2000)
+
+
 def launch(verb, args):
     if len(args) < 3:
         raise Bad('%s needs NAME CWD SID [MODE] [MODEL] [TOOLS]' % verb)
@@ -467,16 +518,47 @@ def launch(verb, args):
             raise Bad('unknown option value %r' % v[:40])
     c = conf()
     under_root(c, cwd)
-    if c.get('tools_force'):  # a device may only narrow the tools asked for (Kirpi: read-only tools, no Bash/Edit/Write)
-        tools = c['tools_force']
-    if c.get('modes') and mode not in c['modes']:  # a device may allow only some modes (Kirpi: plan, which cannot write)
-        raise Refused('this device takes chats only in %s mode' % ' or '.join(c['modes']))
+    # Two classes on a device that has a `working` one (Kirpi): a mode that can write asks for the working class,
+    # which parks the local model through a lease and gets a bigger box; plan mode is the light class, as before.
+    w = c.get('working') if (c.get('working') and mode in c['working'].get('modes', ('acceptEdits', 'auto'))) else None
+    box_mb = w['box_mb'] if w else c.get('box_mb')
+    if not w:
+        if c.get('tools_force'):  # a device may only narrow the tools asked for (Kirpi: read-only tools, no Bash/Edit/Write)
+            tools = c['tools_force']
+        if c.get('modes') and mode not in c['modes']:  # a device may allow only some modes (Kirpi: plan, which cannot write)
+            raise Refused('this device takes chats only in %s mode%s' % (' or '.join(c['modes']), ' right now' if c.get('working') else ''))
     lock = take_lock()
-    why = admission(c)
-    if why:
-        raise Refused(why)
     if name in sessions():
         raise Refused('that chat already runs here')
+    lease = None
+    if w:
+        if snapshot()['chats'] >= c['limits']['max_chats']:
+            raise Refused('%d chat(s) already run here (limit %d)' % (snapshot()['chats'], c['limits']['max_chats']))
+        lease = job('lease', 'chat', '--minutes', str(w.get('hold_minutes', 120)), '--holder', name)
+        if not lease or not lease.get('ok') or not lease.get('token'):
+            raise Refused('a working chat cannot start now: %s' % plain((lease or {}).get('error', 'the job switch did not answer'), 160))
+    try:
+        why = admission(c, avail_mb=w['avail_mb'] if w else None)
+        for _ in range(20):  # the parked model's memory comes back over a few seconds
+            if not (w and why and why.startswith('only ') and 'memory' in why):
+                break
+            time.sleep(0.5)
+            why = admission(c, avail_mb=w['avail_mb'])
+        if why:
+            raise Refused(why)
+        started = start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w)
+    except BaseException:
+        if lease:
+            job('chat-end', name)
+        raise
+    if lease:
+        pid = tmux('display-message', '-p', '-t', tgt(name), '#{pane_pid}', text=True).stdout.strip()
+        if pid.isdigit():
+            job('hold', lease['token'], pid)
+    return started
+
+
+def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     real = os.path.realpath(cwd)
     under_root(c, real)  # a symlink inside a root must not lead out of it
     os.makedirs(real, mode=0o700, exist_ok=True)
@@ -525,8 +607,11 @@ def launch(verb, args):
     extra = [d for d in extra if os.path.isdir(d)]
     if extra:
         cmd = ['env', 'PATH=%s:%s' % (os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'), ':'.join(extra))] + cmd
-    if c.get('box_mb'):  # the chat sits in its own memory box: if it grows, it is the chat that dies, not a neighbour
-        cmd = ['systemd-run', '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=%dM' % c['box_mb'],
+    about = card(c, bool(w) or not (c.get('tools_force') or c.get('working')), box_mb or 0, (w or {}).get('hold_minutes', 120))
+    if about:
+        cmd += ['--append-system-prompt', about]
+    if box_mb:  # the chat sits in its own memory box: if it grows, it is the chat that dies, not a neighbour
+        cmd = ['systemd-run', '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=%dM' % box_mb,
                '-p', 'MemorySwapMax=0', '--'] + cmd
     r = tmux('new-session', '-d', '-x', '200', '-y', '50', '-s', name, '-c', real,
              '-e', 'CLAUDE_CONFIG_DIR=' + c['config_dir'], '-e', 'AIDEN_HOOK_URL=http://127.0.0.1:%d/hook' % c['hook_port'],
@@ -601,8 +686,12 @@ def sample():
             swap += int(v.split()[0])
         elif k == 'SwapFree':
             swap -= int(v.split()[0])
+    try:
+        kind = takes(conf())
+    except Refused:
+        kind = 'none'
     return dict(t=int(time.time()), avail_mb=snap['avail_mb'], load1=snap['load1'], swap_used_mb=max(swap, 0) // 1024,
-                temp_c=snap['temp_c'], chats=chats)
+                temp_c=snap['temp_c'], chats=chats, takes=kind)
 
 
 def run(verb, args, data):
@@ -667,6 +756,11 @@ def run(verb, args, data):
             if not (ok and pid.isdigit() and os.path.exists('/proc/' + pid)):
                 break
             time.sleep(0.1)
+        try:
+            if conf().get('working'):  # a working chat held the machine: give it back (harmless if it did not)
+                job('chat-end', name)
+        except Refused:
+            pass
         print('ok' if ok else 'failed')
         return 0 if ok else 1
     if verb == 'facts':

@@ -4,7 +4,8 @@ and keeps it in two places under ~/.local/state/kimera/:
   now-<device>.json   the LATEST reading, always (mode 600, replaced whole each minute). A reader such as the Uruk map
                       reads this file and never calls the device. {"device", "t" (Tilki's clock, epoch seconds),
                       "state": "up" | "away" | "unknown", and when up: "avail_mb", "load1", "swap_used_mb", "temp_c",
-                      "chats": {name: resident MB}}. "away" = the device did not answer; "unknown" = it answered
+                      "chats": {name: resident MB}, "takes": "none" | "light" | "working" (the kind of chat it
+                      would take now)}. "away" = the device did not answer; "unknown" = it answered
                       something this program does not accept (refused, or a malformed line).
   perf-<device>.tsv   one line per minute, but only while a chat runs: time, available MB, load1, swap used MB,
                       temperature, number of chats, each chat's resident MB (name=MB, comma separated). So this file
@@ -65,11 +66,13 @@ try:  # the device is not trusted: every field is checked before it reaches the 
              chats={k: int(num(v, 0, 1 << 20)) for k, v in d['chats'].items() if NAME.fullmatch(k)})
     if len(s['chats']) != len(d['chats']):
         raise ValueError
+    if d.get('takes') in ('none', 'light', 'working'):  # what kind of chat the device would take now
+        s['takes'] = d['takes']
 except Exception:  # any surprise in the answer, not only the ones foreseen: fail closed, never leave an old "up"
     now('unknown')
     sys.exit(0)  # a malformed answer reaches neither file
 now('up', avail_mb=s['avail_mb'], load1=round(s['load1'], 2), swap_used_mb=s['swap_used_mb'], temp_c=s['temp_c'],
-    chats=s['chats'])
+    chats=s['chats'], **({'takes': s['takes']} if 'takes' in s else {}))
 if not s['chats']:
     sys.exit(0)
 path = os.path.join(STATE, 'perf-%s.tsv' % dev)

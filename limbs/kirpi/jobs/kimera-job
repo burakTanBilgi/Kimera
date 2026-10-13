@@ -9,7 +9,10 @@ Called over ssh by AIDEN's agent:  ssh USER@KIRPI kimera/bin/kimera-job status
                               borrow Kirpi for a job that needs the large model changed
   release TOKEN               give it back; Kirpi returns to text
   ensure                      put things right (run by a timer every minute)
-  wake [--holder NAME]        load the text model if it is parked, and say when it is ready
+  wake [--holder NAME]        load the text model if it is parked, and say when it is ready. While Kirpi carries
+                              a working chat the answer is "queued": the model loads by itself when the chat ends
+  hold TOKEN PID              tell a chat lease which process is the chat, so its end is noticed
+  chat-end HOLDER             the chat of that name ended: give Kirpi back
   ondemand on|off|status      on: the text model is dropped after 2 minutes with no work and loaded again
                               by `wake`; off (the default): it stays loaded, as always
 
@@ -41,6 +44,8 @@ JOBS = {
     'hear':   {'needs': 'text', 'how': 'kimera-hear FILE, beside the text model'},
     'see':    {'needs': 'see',  'how': 'kimera-ocr FILE for words; a lease for the model with eyes'},
     'agent':  {'needs': None,   'how': 'a lease: both large models are dropped so a Claude agent has the memory (kimera-agent)'},
+    'chat':   {'needs': None,   'how': 'a lease held by a working chat (kimera-seat): the large model is parked and its work waits; '
+                                       'search stays up', 'keep_search': True},
 }
 WAIT_ANSWER = 120      # seconds a running answer may take before a switch cuts it
 WAIT_READY = 120       # seconds a model may take to come up
@@ -48,6 +53,7 @@ MAX_MINUTES = 120
 VERSION = 2
 ONDEMAND = os.path.join(HOME, 'kimera', 'ondemand')      # present: the model is loaded only while work arrives
 ACTIVITY, WOKE, PARKED = (os.path.join(RUN, n) for n in ('activity.json', 'woke.json', 'parked.json'))   # PARKED: dropped on purpose, not crashed
+WAITING = os.path.join(RUN, 'waiting.json')            # someone asked for the model while a chat held Kirpi: it is owed a turn
 IDLE_OFF = 120         # seconds with no work before the text model is dropped, in on-demand mode
 
 
@@ -131,9 +137,21 @@ def shown(text=None):
     except OSError: pass
 
 
-def switch(to, by):
+def chat_alive(pid):
+    try:
+        with open(f'/proc/{int(pid)}/comm') as f: return f.read().strip() == 'claude'
+    except (OSError, ValueError, TypeError): return False
+
+def stop_chat(pid):
+    """End a chat that has held Kirpi for its whole time while the model's work waits. Its transcript stays, so
+    the worker manager can resume it later."""
+    if chat_alive(pid):
+        try: os.kill(int(pid), 15)
+        except OSError: pass
+
+def switch(to, by, keep_search=False):
     """Make the large model take the shape `to`. Returns '' or what went wrong.
-    A failed switch always ends on the text model."""
+    A failed switch always ends on the text model. keep_search: with `to` None, leave the small search model up."""
     was = mode_now()
     if to is None and was is None and not any(active(u) for u in MODES.values()):
         return ''
@@ -145,7 +163,7 @@ def switch(to, by):
         while (busy() or (to != REST and hearing())) and time.time() - t < WAIT_ANSWER: time.sleep(1)
         waited, cut = time.time() - t, busy()
         if to is None:                                 # neither large model: the room is for an agent
-            for u in list(MODES.values()) + [SEARCH]: sysctl('stop', u)
+            for u in list(MODES.values()) + ([] if keep_search else [SEARCH]): sysctl('stop', u)
             if hearing(): subprocess.run(['pkill', '-x', 'whisper-cli']); cut = True
             ok = not any(active(u) for u in MODES.values())
             log(f'switch {was} -> nothing by {by}: waited {waited:.0f}s for an answer{", cut it" if cut else ""}; {"done" if ok else "STILL RUNNING"}')
@@ -187,6 +205,10 @@ def to_rest(by):
     l = read(LEASE)
     drop(LEASE); shown(None)
     if l: sysctl('stop', f'kimera-lease-{l["token"][:8]}.timer')
+    owed = read(WAITING); drop(WAITING)
+    if owed:                                           # someone asked for the model while a chat held Kirpi: its turn now
+        log(f'the model is owed a turn ({owed.get("count", 1)} asked while Kirpi was lent); loading it')
+        return switch(REST, by)
     if ondemand() and l and JOBS[l['job']]['needs'] is None:               # an agent's lease ended: stay parked until `wake`
         write(PARKED, {'at': time.time(), 'by': by}); return ''
     return switch(REST, by)
@@ -222,6 +244,7 @@ def status():
             'endpoint': TEXT_URL, 'alias': ALIAS, 'ctx': ctx,
             'busy': busy() if state == 'ready' else False, 'jobs': jobs,
             'search': {'endpoint': SEARCH_URL, 'alias': SEARCH_ALIAS, 'state': search},
+            'waiting': (read(WAITING) or {}).get('count', 0),
             'lease': l and {'job': l['job'], 'holder': l['holder'], 'seconds_left': int(l['ends'] - time.monotonic()),
                             'until': time.strftime('%H:%M:%S', time.localtime(l['until']))}}
 
@@ -256,15 +279,18 @@ def cmd_lease(args):
     l = lease_now()
     if l: out({'ok': False, 'error': 'Kirpi is already lent', 'holder': l['holder'], 'job': l['job'],
                'until': time.strftime('%H:%M:%S', time.localtime(l['until']))}, 2)
-    wrong = switch(JOBS[job]['needs'], holder)
+    if job == 'chat' and (busy() or hearing() or mode_now() == 'see'):   # a chat never cuts an answer: it asks again
+        out({'ok': False, 'error': 'the local model is working; ask again in a moment'}, 2)
+    wrong = switch(JOBS[job]['needs'], holder, JOBS[job].get('keep_search', False))
     if wrong: out({'ok': False, 'error': wrong}, 1)
     token, until = secrets.token_hex(8), time.time() + minutes * 60
     write(LEASE, {'token': token, 'job': job, 'holder': holder, 'until': until,   # until: to show
-                  'ends': time.monotonic() + minutes * 60})                          # ends: to decide
+                  'ends': time.monotonic() + minutes * 60, 'minutes': minutes})      # ends: to decide
     shown(f'{job} · lent to {holder} until {time.strftime("%H:%M", time.localtime(until))}')
-    subprocess.run(['systemd-run', '--user', '--quiet', '--collect', f'--unit=kimera-lease-{token[:8]}',
-                    f'--on-active={minutes}m', '--timer-property=AccuracySec=1s', SELF, 'expire', token],
-                   capture_output=True)
+    if job != 'chat':                                  # a chat's time is judged by `ensure` every minute, which may renew it
+        subprocess.run(['systemd-run', '--user', '--quiet', '--collect', f'--unit=kimera-lease-{token[:8]}',
+                        f'--on-active={minutes}m', '--timer-property=AccuracySec=1s', SELF, 'expire', token],
+                       capture_output=True)
     log(f'lease {job} to {holder} for {minutes} min')
     out({'ok': True, 'token': token, 'job': job, 'until': time.strftime('%H:%M:%S', time.localtime(until)),
          'endpoint': TEXT_URL, 'alias': ALIAS, 'ctx': CTX})
@@ -281,12 +307,35 @@ def cmd_release(args, expired=False):
     out({'ok': not wrong, 'job': 'none' if parked else REST, **({'parked': True, 'wake': 'kimera-job wake'} if parked else {}),
          **({'error': wrong} if wrong else {})}, 1 if wrong else 0)
 
+def cmd_hold(args):
+    if len(args) != 2 or not args[1].isdigit(): out({'ok': False, 'error': 'hold TOKEN PID'}, 2)
+    lock = locked(wait=True)
+    l = read(LEASE)
+    if not l or l.get('token') != args[0] or l['job'] != 'chat': out({'ok': False, 'error': 'no chat lease with that token'}, 2)
+    l['pid'] = int(args[1]); write(LEASE, l)
+    out({'ok': True})
+
+def cmd_chat_end(args):
+    if len(args) != 1: out({'ok': False, 'error': 'chat-end HOLDER'}, 2)
+    lock = locked(wait=True)
+    l = read(LEASE)
+    if not l or l['job'] != 'chat' or l['holder'] != args[0][:40]: out({'ok': True, 'note': 'no chat lease of that name'})
+    wrong = to_rest(l['holder'])
+    log(f'chat {l["holder"]} ended; Kirpi is given back')
+    out({'ok': not wrong, **({'error': wrong} if wrong else {})}, 1 if wrong else 0)
+
 def cmd_wake(args):
     holder = 'unnamed'
     if args[:1] == ['--holder'] and len(args) == 2: holder = args[1][:40]
     elif args: out({'ok': False, 'error': 'wake [--holder NAME]'}, 2)
     lock = locked(wait=True)
     l = lease_now()
+    if l and l['job'] == 'chat':                       # not refused for good: noted, and the model loads when the chat ends
+        w = read(WAITING) or {'count': 0, 'first': time.time()}
+        w['count'] += 1; w['last_by'] = holder; write(WAITING, w)
+        out({'ok': False, 'queued': True, 'error': 'Kirpi carries a chat; the model loads by itself when the chat ends',
+             'holder': l['holder'], 'job': 'chat', 'seconds_left': int(l['ends'] - time.monotonic()),
+             'until': time.strftime('%H:%M:%S', time.localtime(l['until']))}, 2)
     if l and JOBS[l['job']]['needs'] != REST:
         out({'ok': False, 'error': f'Kirpi is lent for {l["job"]} until {time.strftime("%H:%M:%S", time.localtime(l["until"]))}',
              'holder': l['holder'], 'job': l['job'], 'seconds_left': int(l['ends'] - time.monotonic()),
@@ -316,17 +365,26 @@ def cmd_ensure():
     if not lock: out({'ok': True, 'note': 'a switch is under way'})
     drop(MARK)                                         # we hold the lock, so no switch is under way
     did, l, mode = [], read(LEASE), mode_now()
-    if l and l.get('ends', 0) <= time.monotonic():
+    if l and l['job'] == 'chat' and l.get('pid') and not chat_alive(l['pid']):
+        to_rest('the chat ended'); did.append('a chat ended; Kirpi is given back'); l, mode = None, mode_now()
+    elif l and l['job'] == 'chat' and l.get('ends', 0) <= time.monotonic():
+        if read(WAITING):                              # its time is up and the model's work waits: the chat stops, resumable
+            stop_chat(l.get('pid')); to_rest('the clock'); did.append('a chat held Kirpi for its whole time while the model was asked for; stopped it')
+            l, mode = None, mode_now()
+        else:                                          # nobody waits: the chat keeps Kirpi
+            l['ends'] = time.monotonic() + l.get('minutes', MAX_MINUTES) * 60; l['until'] = time.time() + l.get('minutes', MAX_MINUTES) * 60
+            write(LEASE, l); did.append('a chat keeps Kirpi: nobody asked for the model')
+    elif l and l.get('ends', 0) <= time.monotonic():
         to_rest('the clock'); did.append('ended a lease that ran out')
     elif not l and ondemand() and os.path.exists(PARKED) and not any(active(u) for u in MODES.values()):
         pass                                           # parked on purpose; `wake` loads it again
     elif not l and mode != REST:
         w = switch(REST, 'ensure'); did.append(f'started {REST}' if not w else f'could not start {REST}: {w}')
     elif l and JOBS[l['job']]['needs'] is None and mode is not None:
-        w = switch(None, 'ensure'); did.append('stopped a model that started during an agent lease' + (f' (failed: {w})' if w else ''))
+        w = switch(None, 'ensure', JOBS[l['job']].get('keep_search', False)); did.append('stopped a model that started during an agent lease' + (f' (failed: {w})' if w else ''))
     elif l and mode != JOBS[l['job']]['needs']:
         to_rest('ensure'); did.append(f'the lent model was not running; back on {REST}')
-    if mode_now() == REST and not active(SEARCH):
+    if (mode_now() == REST or (l and JOBS[l['job']].get('keep_search'))) and not active(SEARCH):
         start_search(); did.append('started search')
     if not l and ondemand() and mode_now() == REST and healthy(TEXT_URL):
         st, idle = idle_for(read(ACTIVITY), time.time(), totals(), busy() or hearing(), (read(WOKE) or {}).get('at'))
@@ -348,6 +406,8 @@ def main():
     if a[0] == 'expire': cmd_release(a[1:], expired=True)
     if a[0] == 'ensure' and len(a) == 1: cmd_ensure()
     if a[0] == 'wake': cmd_wake(a[1:])
+    if a[0] == 'hold': cmd_hold(a[1:])
+    if a[0] == 'chat-end': cmd_chat_end(a[1:])
     if a[0] == 'ondemand': cmd_ondemand(a[1:])
     out({'ok': False, 'error': f'unknown command {a[0]!r}', 'known': ['status', 'list', 'lease', 'release', 'wake', 'ondemand']}, 2)
 

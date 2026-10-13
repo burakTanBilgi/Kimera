@@ -101,5 +101,46 @@ c, o = run(m.cmd_release, [old])
 c, o = run(m.cmd_lease, ['agent', '--minutes', '5', '--holder', 'new']); before = m.read(m.LEASE)
 c, o = run(m.cmd_release, [old], True)
 check('J a stale expiry timer exits 0 and leaves a newer lease alone', c == 0 and m.read(m.LEASE) == before and not up[MIND])
+alive, stopped = {4242: True}, []                      # K to Q: a working chat holds Kirpi; the model's work waits
+m.chat_alive = lambda pid: alive.get(pid, False)
+m.stop_chat = lambda pid: (stopped.append(pid), alive.update({pid: False}))
+
+reset(on=True)                                         # K: the chat lease parks the large model and keeps search
+c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001']); tok = o['token']
+check('K a chat lease parks the large model and keeps search up', c == 0 and not up[MIND] and up[SEARCH])
+c, o = run(m.cmd_hold, [tok, '4242']); check('K hold names the chat process', c == 0 and m.read(m.LEASE)['pid'] == 4242)
+c, o = run(m.cmd_ensure); check('K ensure leaves a living chat and its parked model alone', not up[MIND] and up[SEARCH] and m.read(m.LEASE))
+up[SEARCH] = False; c, o = run(m.cmd_ensure); check('K ensure brings search back under a chat lease', up[SEARCH] and not up[MIND])
+
+c, o = run(m.cmd_wake, ['--holder', 'filer'])          # L: a wake during the chat is queued, not lost
+check('L a wake during a chat is answered queued and noted', c == 2 and o.get('queued') and m.read(m.WAITING)['count'] == 1 and not up[MIND])
+c, o = run(m.cmd_wake, ['--holder', 'filer']); check('L a second wake is counted', m.read(m.WAITING)['count'] == 2)
+check('L status shows who waits', m.status()['waiting'] == 2)
+
+alive[4242] = False; c, o = run(m.cmd_ensure)          # M: the chat ends, the model is owed a turn
+check('M when the chat ends the model loads by itself, because it was asked for', up[MIND] and m.read(m.LEASE) is None and m.read(m.WAITING) is None)
+
+reset(on=True); alive[4242] = True                     # N: the chat ends and nobody asked: stay parked
+c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001']); run(m.cmd_hold, [o['token'], '4242'])
+c, o = run(m.cmd_chat_end, ['aiden-work0001'])
+check('N chat-end with nobody waiting leaves the model parked', c == 0 and not up[MIND] and m.read(m.LEASE) is None and os.path.exists(m.PARKED))
+c, o = run(m.cmd_chat_end, ['aiden-work0001']); check('N chat-end twice is harmless', c == 0)
+
+reset(on=True)                                         # O: time is up, nobody waits: the chat keeps Kirpi
+c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001']); run(m.cmd_hold, [o['token'], '4242'])
+l = m.read(m.LEASE); l['ends'] = time.monotonic() - 5; m.write(m.LEASE, l); stopped.clear()
+c, o = run(m.cmd_ensure)
+check('O a chat past its time keeps Kirpi while nobody asks for the model', m.lease_now() is not None and not stopped and not up[MIND])
+
+run(m.cmd_wake, ['--holder', 'filer'])                 # P: time is up and the model was asked for: the chat stops
+l = m.read(m.LEASE); l['ends'] = time.monotonic() - 5; m.write(m.LEASE, l)
+c, o = run(m.cmd_ensure)
+check('P a chat past its time is stopped when the model was asked for, and the model loads', stopped == [4242] and up[MIND] and m.read(m.LEASE) is None)
+
+reset(on=True); alive[4242] = True                     # Q: a chat never cuts an answer
+m.busy = lambda: True
+c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001'])
+check('Q a chat lease is refused while the model is answering', c == 2 and up[MIND] and m.read(m.LEASE) is None)
+m.busy = lambda: False
 print('\n%s' % ('ALL PASS' if not fails else 'FAILED: ' + '; '.join(fails)))
 sys.exit(1 if fails else 0)
