@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.11.1 (2026-10-13)
+
+- Found by review of 0.11.0: `kimera-memory` sends the token only when the listener on the memory port belongs to the device user's own forward. Another user's listener on that port gets nothing.
+
 ## 0.11.0 (2026-10-13)
 
 - The memory road. `kimera-memory recall | read | brief | health` on a device asks the owner's memory through a forward kept open from the main machine, with the device's own token: read-only, the token never printed, never sent anywhere but the device's loopback. A fourth narrow key may only hold that one listening port.

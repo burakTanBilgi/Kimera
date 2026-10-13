@@ -105,6 +105,24 @@ setup(token='A' * 30 + '\r\nX-Evil: 1'); c, o, e = run('health'); check('a token
 setup(with_port=False); c, o, e = run('health'); check('a device with no memory road says so, exit 3', c == 3 and 'no road' in e)
 setup(port=80); c, o, e = run('health'); check('a port below 1024 is refused', c == 3)
 setup(); os.remove(tok); c, o, e = run('health'); check('no token yet, exit 3', c == 3 and 'no token' in e)
+# the listener must be this user's own: the client is loaded as a module and shown a table where another user holds the port
+import importlib.machinery, importlib.util
+ld = importlib.machinery.SourceFileLoader('kmem', os.path.join(HERE, 'kimera-memory'))
+M = importlib.util.module_from_spec(importlib.util.spec_from_loader('kmem', ld)); ld.exec_module(M)
+port = srv.server_address[1]
+check('the pretend door, held by this user, counts as ours', M.ours(port))
+head = 'sl local rem st tx rx tr tm retr uid\n'
+def table(*rows):
+    p = os.path.join(tmp, 'tcp'); open(p, 'w').write(head + ''.join('0: %s 00000000:0000 %s 0 0 0 0 0 %d 0 0\n' % r for r in rows)); M.PROC = p
+table(('0100007F:%04X' % port, '0A', os.getuid() + 1)); check('a listener of another user is not ours', not M.ours(port))
+table(('0100007F:%04X' % port, '0A', os.getuid()), ('00000000:%04X' % port, '0A', os.getuid() + 1)); check('one of ours and one of another user is not ours', not M.ours(port))
+table(('0100007F:%04X' % port, '01', os.getuid())); check('a connection that is not a listener does not count', not M.ours(port))
+table(); check('nothing listening is not ours', not M.ours(port))
+M.PROC = os.path.join(tmp, 'gone'); check('a table that cannot be read is not ours', not M.ours(port))
+M.CONF = conf; setup(); n = len(seen); table(('0100007F:%04X' % port, '0A', os.getuid() + 1))
+try: M.ask('/api/health'); rc = 0
+except SystemExit as x: rc = x.code
+check('with another user on the port nothing is sent, exit 3', rc == 3 and len(seen) == n)
 setup(port=1); srv.shutdown()
 setup(port=srv.server_address[1]); c, o, e = run('health'); check('the door away is exit 3', c == 3 and 'away' in e)
 print('%d failure(s)' % fails)
