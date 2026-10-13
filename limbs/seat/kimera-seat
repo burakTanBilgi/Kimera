@@ -738,11 +738,18 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
         pass
     extra = [d for d in extra if os.path.isdir(d)]
     base = os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin')
-    # the bare name must reach that program and no other: a same-named file in a folder earlier on the PATH takes it off
-    if cmds in extra and shutil.which('kimera-memory', path='%s:%s' % (base, ':'.join(extra))) != cmds + '/kimera-memory':
-        extra.remove(cmds)
-    if extra:
-        cmd = ['env', 'PATH=%s:%s' % (base, ':'.join(extra))] + cmd
+    # The bare name reaches the installed program or nothing. On a device with a memory road, any other folder that
+    # holds something of that name is taken off the chat's PATH, the system's own included, and a chat is told of
+    # the command only when the name does reach the installed one.
+    dirs = [d for d in base.split(':') if d] + extra
+    if c.get('memory_port'):
+        dirs = [d for d in dirs if d == cmds or not os.path.lexists(os.path.join(d, 'kimera-memory'))]
+    told = cmds in dirs and shutil.which('kimera-memory', path=':'.join(dirs)) == cmds + '/kimera-memory'
+    if not told:
+        dirs = [d for d in dirs if d != cmds]
+        c = dict(c, memory_port=None)
+    if extra or dirs != [d for d in base.split(':') if d]:
+        cmd = ['env', 'PATH=%s' % ':'.join(dirs)] + cmd
     about = card(c, bool(w) or not (c.get('tools_force') or c.get('working')), box_mb or 0, (w or {}).get('hold_minutes', 120))
     if about:
         cmd += ['--append-system-prompt', about]
