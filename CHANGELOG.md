@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.10 (2026-10-14)
+
+- Found by review of 0.12.9: the look at the shell's start files cannot hang on a pipe or a huge file, covers more files, and is described as a help, not a boundary.
+
 ## 0.12.9 (2026-10-14)
 
 - From a review by an agent on a device: with a memory road only absolute folders stay on a chat's PATH, and a chat is told nothing of the memory command when a start file of the shell names it.
