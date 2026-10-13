@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.3 (2026-10-14)
+
+- A chat on a device with a memory road asks the memory by the bare name `kimera-memory`: the seat's own bin folder is last on the chat's PATH and the machine card names the command bare.
+
 ## 0.12.2 (2026-10-13)
 
 - Found by review: each ask runs in a new folder with a random name, the surroundings are checked before and after the run and an answer is thrown away if anything appeared meanwhile, paths are taken with links resolved, and no skill is offered to an ask.
