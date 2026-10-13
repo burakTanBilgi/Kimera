@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.1 (2026-10-13)
+
+- Found by review of 0.12.0: an ask runs in a private, empty folder outside every seat root and is refused if any instruction file could reach it; and it keeps no transcript on the device.
+
 ## 0.12.0 (2026-10-13)
 
 - New verb `ask NAME MODEL`: one short question to a cloud model on a device, no chat and no tools. stdin is `{"system": text, "prompt": text}`, stdout is the model's text. One at a time, in a small memory box with a time limit, through the same narrow key as the other verbs.

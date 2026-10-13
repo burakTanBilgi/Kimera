@@ -740,6 +740,38 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     return name
 
 
+def ask_folder(c, name):
+    """The folder an ask runs in: ~/kimera/ask/NAME, outside every seat root, so no chat can be started or seeded in
+    it. The program reads instruction files (CLAUDE.md and the like) from the folder it runs in and from the folders
+    above it, and notes kept for that folder; an ask must hear only its caller's system text. So the folder must be a
+    real, empty folder of this user, and none of those files may lie in it, above it up to the home folder, or in the
+    account's own folder. Anything found is a reason to refuse, never something to clean up quietly."""
+    top = os.path.join(HOME, 'kimera/ask')
+    cwd = os.path.join(top, name)
+    os.makedirs(os.path.dirname(top), exist_ok=True)
+    for d in (top, cwd):  # made private here; one found wider than that is refused below, not narrowed quietly
+        try:
+            os.mkdir(d, 0o700)
+        except FileExistsError:
+            pass
+    for d in (top, cwd):
+        st = os.lstat(d)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+            raise Refused('the ask folder is not a private folder of this user')
+    if os.listdir(cwd):
+        raise Refused('the ask folder is not empty; something was put there')
+    marks = ('CLAUDE.md', 'CLAUDE.local.md', '.claude', '.mcp.json')
+    for d in (top, os.path.join(HOME, 'kimera')):
+        if any(os.path.lexists(os.path.join(d, m)) for m in marks):
+            raise Refused('an instruction file lies above the ask folder; an ask must hear only its caller')
+    for p in (os.path.join(HOME, 'CLAUDE.md'), os.path.join(HOME, 'CLAUDE.local.md'), os.path.join(HOME, '.claude/CLAUDE.md'),
+              os.path.join(HOME, '.claude/rules'), os.path.join(c['config_dir'], 'CLAUDE.md'), os.path.join(c['config_dir'], 'rules'),
+              os.path.join(c['config_dir'], 'projects', re.sub(r'[^A-Za-z0-9]', '-', cwd), 'memory')):
+        if os.path.lexists(p):
+            raise Refused('an instruction file of this user would be read by the ask; an ask must hear only its caller')
+    return cwd
+
+
 def ask(args, data):
     """ask NAME MODEL: one short question to a cloud model, answered on stdout. No chat, no tools, no folder of work:
     stdin is one JSON object {"system": text, "prompt": text}, the answer is the model's text. For small standing
@@ -792,8 +824,7 @@ def ask(args, data):
         off = json.load(open(cur))
         off['disableAllHooks'] = True
         settings = json.dumps(off)
-    cwd = os.path.join(os.path.realpath(c['seat_roots'][0]), 'ask-' + name)
-    os.makedirs(cwd, mode=0o700, exist_ok=True)
+    cwd = ask_folder(c, name)
     held = os.path.join(HOME, '.config/kimera/seat/ask')
     os.makedirs(held, mode=0o700, exist_ok=True)
     sysfile = os.path.join(held, '%s-%d.txt' % (name, os.getpid()))
@@ -805,8 +836,9 @@ def ask(args, data):
         cmd = ['systemd-run', '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=%dM' % box, '-p', 'MemorySwapMax=0', '--',
                'timeout', '--kill-after=5', str(limit), c['claude'], '-p', '--model', model, '--system-prompt-file', sysfile,
                '--tools', '', '--setting-sources', 'user', '--settings', settings,
-               '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--output-format', 'text']
-        env = dict(os.environ, CLAUDE_CONFIG_DIR=c['config_dir'], DISABLE_AUTOUPDATER='1',
+               '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--output-format', 'text',
+               '--no-session-persistence']  # the question and the answer are kept nowhere on this device
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=c['config_dir'], DISABLE_AUTOUPDATER='1', CLAUDE_CODE_DISABLE_AUTO_MEMORY='1',
                    AIDEN_HOOK_URL='http://127.0.0.1:%d/hook' % c['hook_port'], KIMERA_HOOK_TOKEN_FILE=c['hook_token_file'])
         t0 = time.time()
         try:

@@ -356,9 +356,26 @@ check('it runs in its own memory box, under a time limit, with no tools and no M
 check('the prompt goes in on stdin and the system text in a file only this user can read', 'STDIN we ship on friday' in al and 'SYSTEM Label the message. MODE 600' in al)
 check('neither is on the command line', 'we ship on friday' not in al.split('CWD')[0] and 'Label the message' not in al.split('CWD')[0])
 check('the system file is gone after the run', os.listdir(seatdir + '/ask') == [])
-check('it runs in its own folder under the seat root, on the seat account, never updating itself', 'CWD %s/ask-filer' % os.path.realpath(root) in al and 'CFG %s UPD 1 HOOK http://127.0.0.1:8732/hook' % tmp in al)
+check('it runs in its own folder under the seat root, on the seat account, never updating itself', 'CWD %s/kimera/ask/filer' % os.path.realpath(tmp) in al and 'CFG %s UPD 1 HOOK http://127.0.0.1:8732/hook' % tmp in al)
 check('the ask is written to the audit log without its text', 'asked filer model=haiku' in open(S.LOG).read() and 'friday' not in open(S.LOG).read())
+check('the question and the answer are kept nowhere on the device', '--no-session-persistence' in al)
+check('the ask folder is private and outside every seat root', stat.S_IMODE(os.stat(tmp + '/kimera/ask/filer').st_mode) == 0o700 and not (tmp + '/kimera/ask').startswith(root))
 n = al.count('ARGV')
+af = tmp + '/kimera/ask'
+def planted(path, isdir=False):
+    (os.makedirs if isdir else lambda p: open(p, 'w').close())(path)
+    r = call('ask filer haiku', Q())[0]
+    (os.rmdir if isdir else os.remove)(path)
+    return r == 2
+check('a file put in the ask folder refuses the ask', planted(af + '/filer/CLAUDE.md'))
+check('any other file there refuses it too', planted(af + '/filer/notes.txt'))
+check('an instruction file above the ask folder refuses it', planted(af + '/CLAUDE.md') and planted(tmp + '/kimera/.claude', True) and planted(tmp + '/CLAUDE.md'))
+check('an instruction file in the account folder refuses it', planted(tmp + '/rules', True))
+check('notes kept for the ask folder refuse it', planted(os.path.join(tmp, 'projects', S.re.sub(r'[^A-Za-z0-9]', '-', af + '/filer'), 'memory'), True))
+os.rmdir(af + '/filer'); os.symlink(root, af + '/filer')
+check('an ask folder that is a link elsewhere refuses it', call('ask filer haiku', Q())[0] == 2)
+os.remove(af + '/filer')
+os.chmod(af, 0o755); check('an ask folder others can enter refuses it', call('ask filer haiku', Q())[0] == 2); os.chmod(af, 0o700)
 check('a model the row does not name is refused', call('ask filer sonnet', Q())[0] == 2)
 for badq in (b'not json', json.dumps({'system': 'x'}).encode(), json.dumps({'system': 'x', 'prompt': 'y', 'tools': 'Bash'}).encode(),
              json.dumps({'system': 1, 'prompt': 'y'}).encode(), json.dumps(['a']).encode()):
