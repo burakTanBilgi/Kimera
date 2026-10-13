@@ -30,6 +30,9 @@ MAX_CAPTURE = 256 * 1024
 MAX_SEED, MAX_SEED_FILES = 200 << 20, 20000
 MAX_FETCH = 2 << 20
 MAX_PULL = 64 << 20
+MAX_ASK, MAX_ASK_ANSWER = 128 * 1024, 64 * 1024
+ASK_LOCK = os.path.join(HOME, 'kimera/ask.lock')
+ASK_NAME_RE = re.compile(r'^[a-z][a-z0-9-]{0,23}$')
 REL_RE = re.compile(r'^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$')
 import unicodedata
 COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
@@ -651,10 +654,8 @@ def synced_plugins(config_dir):
     return sorted(names)
 
 
-def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
-    real = os.path.realpath(cwd)
-    under_root(c, real)  # a symlink inside a root must not lead out of it
-    os.makedirs(real, mode=0o700, exist_ok=True)
+def seat_settings(c, name):
+    """The path of the settings every program started here runs with, put back to the installer's copy first."""
     seat = os.path.join(HOME, '.config/kimera/seat')
     # Same-user boundary: a chat can edit these files. So every start (1) puts the seat settings back from the pristine
     # copy the installer kept, so tampering lasts only inside the chat that did it, and (2) refuses to start if the
@@ -695,13 +696,21 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     extra = sorted(set(user) - set(c.get('user_settings_allow', ['theme'])))
     if extra:
         raise Refused('the user settings hold %s; remove them or list them in user_settings_allow' % ', '.join(extra))
+    return cur
+
+
+def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
+    real = os.path.realpath(cwd)
+    under_root(c, real)  # a symlink inside a root must not lead out of it
+    os.makedirs(real, mode=0o700, exist_ok=True)
+    cur = seat_settings(c, name)
     cmd = [c['claude'], '--session-id' if verb == 'start' else '--resume', sid]
     if mode:
         cmd += ['--permission-mode', mode]
     if model:
         cmd += ['--model', model]
     # user scope only: a chat can write <folder>/.claude/settings*.json (project, local scopes), and those must not count
-    cmd += ['--setting-sources', 'user', '--settings', os.path.join(seat, 'settings.json')]
+    cmd += ['--setting-sources', 'user', '--settings', cur]
     if tools:
         cmd += ['--tools', tools]
     # no MCP server of any scope (user config, the folder's .mcp.json a chat can write) loads on a device, tools or not
@@ -729,6 +738,93 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     if r.returncode != 0:
         raise Refused('tmux would not start it: ' + (r.stderr.strip().splitlines() or ['no reason given'])[-1][:160])
     return name
+
+
+def ask(args, data):
+    """ask NAME MODEL: one short question to a cloud model, answered on stdout. No chat, no tools, no folder of work:
+    stdin is one JSON object {"system": text, "prompt": text}, the answer is the model's text. For small standing
+    chores (a filer that labels one message at a time) that should not cost the main machine its memory. One at a
+    time; it sits in its own small memory box and is stopped at the row's time limit. It parks and wakes nothing."""
+    if len(args) != 2 or not ASK_NAME_RE.fullmatch(args[0]) or args[1] not in MODELS:
+        raise Bad('ask needs NAME (a-z, 0-9, -; up to 24) and MODEL')
+    name, model = args
+    c = conf()
+    a = c.get('ask')
+    if not isinstance(a, dict):
+        raise Refused('this device does not take asks')
+    if model not in a.get('models', ['haiku']):
+        raise Refused('this device answers asks only with: ' + ' '.join(a.get('models', ['haiku'])))
+    if len(data) > MAX_ASK:
+        raise Refused('the question is over %d KiB' % (MAX_ASK >> 10))
+    try:
+        q = json.loads(data.decode('utf-8'))
+        system, prompt = q['system'], q['prompt']
+        if not (isinstance(q, dict) and set(q) == {'system', 'prompt'} and isinstance(system, str) and isinstance(prompt, str)):
+            raise ValueError
+    except (ValueError, KeyError, TypeError):
+        raise Bad('stdin must be one JSON object with exactly "system" and "prompt", both text')
+    if not prompt.strip() or len(system) > 16000 or len(prompt) > 32000 or '\0' in system + prompt:
+        raise Refused('the prompt is empty, or system is over 16,000 or prompt over 32,000 characters')
+    if not os.path.isdir(c['config_dir']):
+        raise Refused('Claude Code is not logged in here')
+    box, floor, limit = int(a.get('box_mb', 500)), int(a.get('avail_mb', 500)), int(a.get('timeout_s', 90))
+    if not (200 <= box <= 1000 and 10 <= limit <= 300):
+        raise Refused('the ask limits in this device\'s row are out of range')
+    os.makedirs(os.path.dirname(ASK_LOCK), exist_ok=True)
+    lock = open(ASK_LOCK, 'w')
+    deadline = time.time() + 30
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if time.time() > deadline:
+                raise Refused('another ask is still running here')
+            time.sleep(0.3)
+    s = snapshot()
+    if s['avail_mb'] < floor:
+        raise Refused('only %d MB of memory available (an ask needs %d)' % (s['avail_mb'], floor))
+    if s['temp_c'] >= 85:
+        raise Refused('it is hot (%d C)' % s['temp_c'])
+    cur = seat_settings(c, name)
+    settings = cur
+    if not a.get('hooks', True):  # the same settings, with the hooks silent: nobody is told of these runs
+        off = json.load(open(cur))
+        off['disableAllHooks'] = True
+        settings = json.dumps(off)
+    cwd = os.path.join(os.path.realpath(c['seat_roots'][0]), 'ask-' + name)
+    os.makedirs(cwd, mode=0o700, exist_ok=True)
+    held = os.path.join(HOME, '.config/kimera/seat/ask')
+    os.makedirs(held, mode=0o700, exist_ok=True)
+    sysfile = os.path.join(held, '%s-%d.txt' % (name, os.getpid()))
+    # the system text goes in a file only this user can read and the prompt on stdin: neither is on a command line
+    fd = os.open(sysfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(system)
+        cmd = ['systemd-run', '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=%dM' % box, '-p', 'MemorySwapMax=0', '--',
+               'timeout', '--kill-after=5', str(limit), c['claude'], '-p', '--model', model, '--system-prompt-file', sysfile,
+               '--tools', '', '--setting-sources', 'user', '--settings', settings,
+               '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--output-format', 'text']
+        env = dict(os.environ, CLAUDE_CONFIG_DIR=c['config_dir'], DISABLE_AUTOUPDATER='1',
+                   AIDEN_HOOK_URL='http://127.0.0.1:%d/hook' % c['hook_port'], KIMERA_HOOK_TOKEN_FILE=c['hook_token_file'])
+        t0 = time.time()
+        try:
+            r = subprocess.run(cmd, input=prompt.encode('utf-8'), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                               cwd=cwd, env=env, timeout=limit + 15)
+        except subprocess.TimeoutExpired:
+            raise Refused('the model did not answer within %d seconds' % limit)
+    finally:
+        try:
+            os.unlink(sysfile)
+        except OSError:
+            pass
+    took = time.time() - t0
+    if r.returncode == 124 or r.returncode == 137:
+        raise Refused('the model did not answer within %d seconds, or the run outgrew its %d MB' % (limit, box))
+    if r.returncode != 0 or not r.stdout.strip():
+        return None, took
+    return r.stdout[:MAX_ASK_ANSWER], took
 
 
 def facts(name):
@@ -825,6 +921,14 @@ def run(verb, args, data):
         size = pull(args)
         audit('pulled', args[0], 'file=%s bytes=%d' % (args[1], size))
         return 0
+    if verb == 'ask':
+        out, took = ask(args, data)
+        audit('asked', args[0], 'model=%s in=%d out=%d seconds=%.1f' % (args[1], len(data), len(out or b''), took))
+        if out is None:
+            print('the run failed')
+            return 1
+        sys.stdout.buffer.write(out)
+        return 0
     if verb == 'fetch':
         out = fetch(args)
         if out is None:
@@ -891,7 +995,7 @@ def main():
         print('no verb')
         return 4
     verb, args = parts[0], parts[1:]
-    data = sys.stdin.buffer.read(MAX_TYPE + 1) if verb == 'type' else b''
+    data = sys.stdin.buffer.read(MAX_TYPE + 1) if verb == 'type' else sys.stdin.buffer.read(MAX_ASK + 1) if verb == 'ask' else b''
     try:
         rc = run(verb, args, data)
         audit(verb, args[0] if args else None,

@@ -331,6 +331,68 @@ S.snapshot = lambda: dict(avail_mb=4000, load1=0.1, cores=4, disk_gb=50, temp_c=
 check('a device without a memory road says nothing of the memory', 'kimera-memory' not in log3)
 check('a working chat on a device with a memory road is told how to ask it', 'kimera-memory recall' in S.card(dict(cfg, memory_port=8766), True, 1800, 120))
 check('a reading chat is not told of a command it has no shell for', 'kimera-memory' not in S.card(dict(cfg, memory_port=8766), False, 500, 0))
+# ask: one short question to a cloud model, no chat. A pretend systemd-run records what it was given.
+arec = os.path.join(tmp, 'ask.log'); aout = os.path.join(tmp, 'ask.out'); arc = os.path.join(tmp, 'ask.rc')
+fakerun = os.path.join(bindir, 'systemd-run')
+open(fakerun, 'w').write(f"""#!/bin/sh
+{{ echo "ARGV $@"; echo "CWD $(pwd)"; echo "CFG $CLAUDE_CONFIG_DIR UPD $DISABLE_AUTOUPDATER HOOK $AIDEN_HOOK_URL"; }} >> {arec}
+while [ $# -gt 0 ]; do if [ "$1" = --system-prompt-file ]; then echo "SYSTEM $(cat "$2") MODE $(stat -c %a "$2")" >> {arec}; fi; shift; done
+echo "STDIN $(cat)" >> {arec}
+cat {aout} 2>/dev/null
+exit $(cat {arc} 2>/dev/null || echo 0)
+""")
+os.chmod(fakerun, 0o755)
+Q = lambda system='Label the message.', prompt='we ship on friday': json.dumps({'system': system, 'prompt': prompt}).encode()
+check('a device whose row has no ask refuses one', call('ask filer haiku', Q()) == (2, 'this device does not take asks'))
+cfg['ask'] = {'models': ['haiku'], 'box_mb': 500, 'avail_mb': 500, 'timeout_s': 90}
+json.dump(cfg, open(seatdir + '/seat.json', 'w'))
+open(aout, 'w').write('decision: ship on friday\n')
+rc, out = call('ask filer haiku', Q())
+al = open(arec).read()
+check('an ask answers with the model\'s text and nothing else', (rc, out) == (0, 'decision: ship on friday'))
+check('it runs in its own memory box, under a time limit, with no tools and no MCP',
+      '-p MemoryMax=500M -p MemorySwapMax=0 -- timeout --kill-after=5 90 /bin/claude -p --model haiku --system-prompt-file' in al
+      and '--tools  --setting-sources user --settings %s/settings.json --strict-mcp-config --mcp-config {"mcpServers":{}} --output-format text' % seatdir in al)
+check('the prompt goes in on stdin and the system text in a file only this user can read', 'STDIN we ship on friday' in al and 'SYSTEM Label the message. MODE 600' in al)
+check('neither is on the command line', 'we ship on friday' not in al.split('CWD')[0] and 'Label the message' not in al.split('CWD')[0])
+check('the system file is gone after the run', os.listdir(seatdir + '/ask') == [])
+check('it runs in its own folder under the seat root, on the seat account, never updating itself', 'CWD %s/ask-filer' % os.path.realpath(root) in al and 'CFG %s UPD 1 HOOK http://127.0.0.1:8732/hook' % tmp in al)
+check('the ask is written to the audit log without its text', 'asked filer model=haiku' in open(S.LOG).read() and 'friday' not in open(S.LOG).read())
+n = al.count('ARGV')
+check('a model the row does not name is refused', call('ask filer sonnet', Q())[0] == 2)
+for badq in (b'not json', json.dumps({'system': 'x'}).encode(), json.dumps({'system': 'x', 'prompt': 'y', 'tools': 'Bash'}).encode(),
+             json.dumps({'system': 1, 'prompt': 'y'}).encode(), json.dumps(['a']).encode()):
+    check('a question of the wrong shape is refused: %s' % badq[:24].decode(), call('ask filer haiku', badq)[0] == 4)
+check('an empty prompt is refused', call('ask filer haiku', Q(prompt='  '))[0] == 2)
+check('a prompt that is too long is refused', call('ask filer haiku', Q(prompt='x' * 32001))[0] == 2)
+check('a question over the size limit is refused', call('ask filer haiku', b'x' * (S.MAX_ASK + 1))[0] == 2)
+for badname in ('Filer', 'a/b', '-x', 'x' * 25, '../x'):
+    check('a name of the wrong shape is refused: %s' % badname[:10], call('ask %s haiku' % badname, Q())[0] == 4)
+check('ask with an option after the model is refused', call('ask filer haiku --dangerously', Q())[0] == 4)
+check('none of the refused asks started anything', open(arec).read().count('ARGV') == n)
+S.snapshot = lambda: dict(avail_mb=300, load1=0.1, cores=4, disk_gb=50, temp_c=40, heavy=0, chats=0)
+check('too little memory is said in one sentence', call('ask filer haiku', Q()) == (2, 'only 300 MB of memory available (an ask needs 500)'))
+S.snapshot = lambda: dict(avail_mb=4000, load1=0.1, cores=4, disk_gb=50, temp_c=90, heavy=0, chats=0)
+check('a hot machine refuses', call('ask filer haiku', Q())[0] == 2)
+S.snapshot = lambda: dict(avail_mb=4000, load1=0.1, cores=4, disk_gb=50, temp_c=40, heavy=0, chats=1)
+check('an ask runs beside a chat', call('ask filer haiku', Q())[0] == 0)
+open(arc, 'w').write('1'); check('a run that fails is exit 1', call('ask filer haiku', Q()) == (1, 'the run failed'))
+open(arc, 'w').write('124'); check('a run that passes its time is refused with the reason', call('ask filer haiku', Q())[0] == 2)
+open(arc, 'w').write('0'); open(aout, 'w').write(''); check('an empty answer is a failed run', call('ask filer haiku', Q())[0] == 1)
+open(aout, 'w').write('y' * 100000); rc, out = call('ask filer haiku', Q()); check('a long answer is cut at 64 KiB', rc == 0 and len(out) == 65536)
+import fcntl as _f
+held = open(S.ASK_LOCK, 'w'); _f.flock(held, _f.LOCK_EX); _t = S.time.time; _n = [0.0]
+def _fast(): _n[0] += 5; return _t() + _n[0]
+S.time.time = _fast; S.time.sleep = lambda x: None
+check('a second ask waits, then is refused while the first still runs', call('ask filer haiku', Q()) == (2, 'another ask is still running here'))
+S.time.time = _t; held.close()
+cfg['ask']['hooks'] = False; json.dump(cfg, open(seatdir + '/seat.json', 'w')); open(aout, 'w').write('ok')
+open(arec, 'w').close(); call('ask filer haiku', Q())
+check('with hooks off in the row the run is told to keep them silent', '"disableAllHooks": true' in open(arec).read())
+open(seatdir + '/settings.json', 'w').write('{"permissions":{"allow":["Bash"]}}'); open(arec, 'w').close(); call('ask filer haiku', Q())
+check('settings a chat has changed are put back before an ask', 'permissions' not in open(seatdir + '/settings.json').read())
+os.remove(seatdir + '/settings.pristine.json')
+check('without the installer\'s settings copy an ask is refused', call('ask filer haiku', Q())[0] == 2)
 S.TMUX_SHA256 = '0' * 64  # a swapped binary is refused, never executed
 check('a private tmux that is not the expected package is refused', call('has aiden-abcdef12')[0] == 2)
 print('\n%d failure(s)' % len(fails))

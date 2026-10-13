@@ -9,7 +9,7 @@ the workers (agent chats), and Kimera owns the machines and the road to them.
 
 This repository is the public part of a private one. It holds the door, the job switch, their tests and
 the measurements. Addresses, host configuration, the desk screens of the machines and the guards stay
-private. Version 0.11.1, 13 October 2026.
+private. Version 0.12.0, 13 October 2026.
 
 The history here starts at 0.4.0, one commit per release from then on. The private repository began on 8 October 2026 and held about 60 commits and
 13 release tags by this version, all tagged on 13 October; the work itself started in late September.
@@ -53,7 +53,7 @@ flowchart LR
 5. Every verb writes one line to the device's own log: time, verb, chat name, outcome. Typed text is
    logged by its length only.
 
-The thirteen verbs:
+The fourteen verbs:
 
 | Verb | What it does |
 |---|---|
@@ -62,6 +62,7 @@ The thirteen verbs:
 | `seed` | Put a read copy of a git worktree (tracked files at one commit) into the seat folder, with an optional read-only pack of notes beside it. |
 | `fetch` | What a chat changed in a seeded folder, as one text diff. Links and binary files are refused by name. |
 | `pull` | Bring one finished file (a built program) to the calling machine. It is kept, never run. |
+| `ask` | One short question to a cloud model on the device, no chat and no tools: system text and prompt in, the model's text out. One at a time, in a small memory box. |
 | `has` | Is that chat's session alive? |
 | `capture` | The chat's screen as text, cut at 256 KiB. |
 | `type` | Text from stdin (64 KiB at most) pasted into the chat. |
@@ -72,8 +73,9 @@ The thirteen verbs:
 
 Exit codes: 0 yes, 1 no or failed, 2 refused, 3 device away, 4 bad arguments.
 
-Three keys reach a device, each able to do one thing: run the seat program, read the chat transcripts
-(read-only `rrsync`), or listen on one loopback port so the device's hooks can reach the worker manager.
+Up to four keys reach a device, each able to do one thing: run the seat program, read the chat transcripts
+(read-only `rrsync`), listen on one loopback port so the device's hooks can reach the worker manager, or
+listen on one more so `kimera-memory` on the device can ask the owner's memory (read-only, with the device's own token).
 None of them gives a shell.
 
 Around the door:

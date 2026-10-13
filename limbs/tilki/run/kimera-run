@@ -13,6 +13,9 @@
   pull CWD FILE   bring one finished file (a built program, say) from a seat folder to this machine. It is kept,
                   never run: ~/.local/share/kimera/pulled/DEVICE/<first 16 of its sha256>-<name>, mode 600.
                   Answers `ok PATH BYTES SHA256`. 64 MB a file at most
+  ask NAME MODEL  one short question to a cloud model on the device, no chat and no tools: stdin is one JSON object
+                  {"system": text, "prompt": text} (128 KiB at most), stdout is the model's text. For a row with `ask`.
+                  One at a time; exit 2 with one sentence when the device has no room, 3 when it is away
   sample          one JSON line of the device's memory, load, swap, temperature and each chat's resident memory
   has NAME | capture NAME [ansi] | type NAME   (text on stdin, up to 64 KiB) | key NAME KEY | kill NAME | facts NAME
 Exit codes: 0 ok/yes   1 no/failed   2 refused (one sentence on stdout)   3 device away   4 bad arguments
@@ -35,6 +38,7 @@ MODELS = ('sonnet', 'opus', 'haiku')
 TOOLSETS = ('Read,Grep,Glob,Bash,Edit,Write', 'Read,Grep,Glob,Bash')
 KEYS = ('Enter', 'C-u', 'Escape', 'C-c')
 MAX_TYPE = 64 * 1024
+MAX_ASK = 128 * 1024
 
 
 def bad(why):
@@ -53,6 +57,9 @@ def check(verb, args):
         if not SID_RE.fullmatch(args[2]): bad('SID must be a UUID')
         for v in args[3:]:
             if v not in MODES + MODELS + TOOLSETS: bad('unknown option value')
+        return
+    if verb == 'ask':
+        if len(args) != 2 or not re.fullmatch(r'[a-z][a-z0-9-]{0,23}', args[0]) or args[1] not in MODELS: bad('ask needs NAME (a-z, 0-9, -; up to 24) and MODEL')
         return
     if verb == 'pull':
         if len(args) != 2 or not PATH_RE.fullmatch(args[0]) or '..' in args[0].split('/'): bad('pull needs CWD FILE; CWD an absolute path of a-z, 0-9, _ . / -')
@@ -73,7 +80,7 @@ def check(verb, args):
         if verb == 'key' and (len(extra) != 1 or extra[0] not in KEYS): bad('KEY must be one of ' + ' '.join(KEYS))
         if verb not in ('capture', 'key') and extra: bad('%s takes only NAME' % verb)
         return
-    bad('unknown verb; use admit start resume seed fetch pull has capture type key kill facts sample')
+    bad('unknown verb; use admit start resume seed fetch pull ask has capture type key kill facts sample')
 
 
 def pull(dev, cmd, args):
@@ -226,6 +233,14 @@ def main():
             return 2
         if not data:
             bad('type needs text on stdin')
+    if verb == 'ask':
+        if not row.get('ask'):
+            print('this device does not take asks')
+            return 2
+        data = sys.stdin.buffer.read(MAX_ASK + 1)
+        if len(data) > MAX_ASK:
+            print('the question is over 128 KiB')
+            return 2
     ssh = row['ssh']
     feed = None
     if verb == 'seed':
@@ -300,7 +315,7 @@ def main():
                 print('git could not pack the work')
                 return 1
         else:
-            r = subprocess.run(cmd, input=data, capture_output=True, timeout=60 if verb in ('start', 'resume', 'fetch') else 30)
+            r = subprocess.run(cmd, input=data, capture_output=True, timeout=60 if verb in ('start', 'resume', 'fetch') else 360 if verb == 'ask' else 30)
     except subprocess.TimeoutExpired:
         r = None
         if feed:

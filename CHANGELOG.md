@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.0 (2026-10-13)
+
+- New verb `ask NAME MODEL`: one short question to a cloud model on a device, no chat and no tools. stdin is `{"system": text, "prompt": text}`, stdout is the model's text. One at a time, in a small memory box with a time limit, through the same narrow key as the other verbs.
+
 ## 0.11.1 (2026-10-13)
 
 - Found by review of 0.11.0: `kimera-memory` sends the token only when the listener on the memory port belongs to the device user's own forward. Another user's listener on that port gets nothing.

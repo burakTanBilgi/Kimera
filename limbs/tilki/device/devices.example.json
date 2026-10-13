@@ -83,6 +83,14 @@
       ]
     },
     "memory_port": 8766,
-    "memory_token_file": "/home/USER/.config/kimera/memory-token"
+    "memory_token_file": "/home/USER/.config/kimera/memory-token",
+    "ask": {
+      "models": [
+        "haiku"
+      ],
+      "box_mb": 500,
+      "avail_mb": 500,
+      "timeout_s": 90
+    }
   }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # authorize-device.sh DEVICE   (run on Tilki, only on Tan's word: it adds up to four restricted lines to the
 # device user's ~/.ssh/authorized_keys). Each line has `restrict` (no shell, no pty, no forwarding unless named):
-#   kimera-seat   : runs only ~/kimera/bin/kimera-seat (the nine verbs)
+#   kimera-seat   : runs only ~/kimera/bin/kimera-seat (its verbs, nothing else)
 #   kimera-mirror : runs only `rrsync -ro <config dir>/projects` (read-only copy of transcripts)
 #   kimera-hooks  : may only listen on 127.0.0.1:<hook_port> on the device (permitopen limited to the discard port: no useful local forwards); runs nothing
 #   kimera-memory : may only listen on 127.0.0.1:<memory_port> on the device (the road to the memory's device door); runs nothing.
