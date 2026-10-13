@@ -611,27 +611,38 @@ def launch(verb, args):
 
 def synced_plugins(config_dir):
     """The names of the organization plugins this config could load: read from the plugin folders themselves and
-    from the usage list. Only names of a plain shape are taken."""
+    from the usage list. Fails closed: a plugin whose description cannot be read, or whose name is not of a plain
+    shape, cannot be switched off by name, so the start is refused and says which."""
     names = set()
     root = os.path.join(config_dir, 'plugins', 'synced')
-    try:
-        for org in os.listdir(root):
-            for one in os.listdir(os.path.join(root, org)):
-                try:
-                    n = json.load(open(os.path.join(root, org, one, '.claude-plugin', 'plugin.json'))).get('name')
-                except (OSError, ValueError, AttributeError):
+    if os.path.isdir(root):
+        try:
+            orgs = os.listdir(root)
+            for org in orgs:
+                if not os.path.isdir(os.path.join(root, org)):
                     continue
-                if isinstance(n, str):
+                for one in os.listdir(os.path.join(root, org)):
+                    desc = os.path.join(root, org, one, '.claude-plugin', 'plugin.json')
+                    if not os.path.lexists(desc):
+                        continue  # not a plugin folder
+                    n = json.load(open(desc)).get('name')
+                    if not isinstance(n, str):
+                        raise ValueError
                     names.add(n)
-    except OSError:
-        pass
-    try:
-        for k in json.load(open(os.path.join(config_dir, '.claude.json'))).get('pluginUsage', {}):
-            if k.endswith('@synced'):
-                names.add(k[:-len('@synced')])
-    except (OSError, ValueError, AttributeError):
-        pass
-    return sorted(n for n in names if re.fullmatch(r'[A-Za-z0-9._-]{1,80}', n))
+        except (OSError, ValueError, AttributeError):
+            raise Refused('an organization plugin on this device cannot be read, so it cannot be switched off; look at %s' % root)
+    usage = os.path.join(config_dir, '.claude.json')
+    if os.path.exists(usage):
+        try:
+            for k in (json.load(open(usage)).get('pluginUsage') or {}):
+                if k.endswith('@synced'):
+                    names.add(k[:-len('@synced')])
+        except (OSError, ValueError, AttributeError):
+            raise Refused('the list of plugins on this device cannot be read, so they cannot be switched off')
+    odd = sorted(n for n in names if not re.fullmatch(r'[A-Za-z0-9._-]{1,80}', n))
+    if odd:
+        raise Refused('an organization plugin has a name this seat cannot switch off: %s' % plain(odd[0], 60))
+    return sorted(names)
 
 
 def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):

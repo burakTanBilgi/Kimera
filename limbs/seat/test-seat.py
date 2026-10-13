@@ -78,12 +78,16 @@ S.sessions = lambda: []
 call(f'start aiden-fourth0001 {root}/d {sid}')
 check('tampered seat settings restored at start', json.load(open(seatdir + '/settings.json')) == {'enabledPlugins': {}})
 os.makedirs(tmp + '/plugins/synced/org1/p1/.claude-plugin'); json.dump({'name': 'guardish'}, open(tmp + '/plugins/synced/org1/p1/.claude-plugin/plugin.json', 'w'))
-json.dump({'pluginUsage': {'nagger@synced': {}, 'cc-builtin@builtin': {}, 'bad name!@synced': {}}}, open(tmp + '/.claude.json', 'w'))
+json.dump({'pluginUsage': {'nagger@synced': {}, 'cc-builtin@builtin': {}}}, open(tmp + '/.claude.json', 'w'))
 S.sessions = lambda: []
 call(f'start aiden-fifth00001 {root}/e5 {sid}')
 check('the chat keeps its own name whatever plugins are found', '-s aiden-fifth00001 ' in open(rec).read().splitlines()[-1] or any('-s aiden-fifth00001 ' in l for l in open(rec).read().splitlines()))
 check('every organization plugin that could load is off at each start', json.load(open(seatdir + '/settings.json'))['enabledPlugins'] == {'guardish@synced': False, 'nagger@synced': False})
-os.remove(tmp + '/.claude.json'); __import__('shutil').rmtree(tmp + '/plugins')
+json.dump({'pluginUsage': {'bad name!@synced': {}}}, open(tmp + '/.claude.json', 'w'))
+check('a plugin whose name cannot be switched off refuses the start', call(f'start aiden-sixth00001 {root}/e6 {sid}')[0] == 2)
+os.remove(tmp + '/.claude.json'); open(tmp + '/plugins/synced/org1/p1/.claude-plugin/plugin.json', 'w').write('{broken')
+check('a plugin that cannot be read refuses the start', call(f'start aiden-sixth00001 {root}/e6 {sid}')[0] == 2)
+__import__('shutil').rmtree(tmp + '/plugins')
 S.sessions = lambda: ['aiden-abcdef12']
 check('second chat refused (limit 1)', call(f'start aiden-other0001 {root}/b {sid}')[0] == 2)
 check('key bad', call(f'key {N} Delete')[0] == 4)
