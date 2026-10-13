@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.8 (2026-10-14)
+
+- No change to the public part.
+
 ## 0.12.7 (2026-10-14)
 
 - Found by review of 0.12.6: any other folder holding a program named like the memory command is taken off a chat's PATH, and a chat is told of the command only when the bare name reaches the installed program.
