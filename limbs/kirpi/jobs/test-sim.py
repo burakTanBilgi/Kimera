@@ -102,8 +102,9 @@ c, o = run(m.cmd_lease, ['agent', '--minutes', '5', '--holder', 'new']); before 
 c, o = run(m.cmd_release, [old], True)
 check('J a stale expiry timer exits 0 and leaves a newer lease alone', c == 0 and m.read(m.LEASE) == before and not up[MIND])
 alive, stopped = {4242: True}, []                      # K to Q: a working chat holds Kirpi; the model's work waits
-m.chat_alive = lambda pid: alive.get(pid, False)
-m.stop_chat = lambda pid: (stopped.append(pid), alive.update({pid: False}))
+m.chat_alive = lambda pid, start=None: alive.get(pid, False) and start == 777
+m.stop_chat = lambda pid, start=None: (stopped.append(pid), alive.update({pid: False}))
+m.born = lambda pid: 777 if alive.get(int(pid)) else None
 
 reset(on=True)                                         # K: the chat lease parks the large model and keeps search
 c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001']); tok = o['token']
@@ -136,6 +137,21 @@ run(m.cmd_wake, ['--holder', 'filer'])                 # P: time is up and the m
 l = m.read(m.LEASE); l['ends'] = time.monotonic() - 5; m.write(m.LEASE, l)
 c, o = run(m.cmd_ensure)
 check('P a chat past its time is stopped when the model was asked for, and the model loads', stopped == [4242] and up[MIND] and m.read(m.LEASE) is None)
+
+reset(on=True); alive[4242] = True                     # R: a lease no chat took does not hold Kirpi for ever
+c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001'])
+c, o = run(m.cmd_ensure); check('R a fresh chat lease without its process is given a moment', m.read(m.LEASE) is not None)
+l = m.read(m.LEASE); l['since'] -= 200; m.write(m.LEASE, l); c, o = run(m.cmd_ensure)
+check('R a chat lease nobody took is ended', m.read(m.LEASE) is None and 'nobody took' in o['did'][0])
+
+reset(on=True)                                         # S: the same process id under another process is not the chat
+c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001']); run(m.cmd_hold, [o['token'], '4242'])
+m.born = lambda pid: 999; l = m.read(m.LEASE); l['start'] = 111; m.write(m.LEASE, l)
+c, o = run(m.cmd_ensure); check('S a reused process id does not keep the lease', m.read(m.LEASE) is None)
+m.born = lambda pid: 777 if alive.get(int(pid)) else None
+c, o = run(m.cmd_lease, ['chat', '--minutes', '120', '--holder', 'aiden-work0001']); tok = o['token']; alive[5555] = False
+c, o = run(m.cmd_hold, [tok, '5555']); check('S hold refuses a process that is not there', c == 2)
+run(m.cmd_chat_end, ['aiden-work0001'])
 
 reset(on=True); alive[4242] = True                     # Q: a chat never cuts an answer
 m.busy = lambda: True

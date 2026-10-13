@@ -9,7 +9,7 @@ the workers (agent chats), and Kimera owns the machines and the road to them.
 
 This repository is the public part of a private one. It holds the door, the job switch, their tests and
 the measurements. Addresses, host configuration, the desk screens of the machines and the guards stay
-private. Version 0.9.1, 13 October 2026.
+private. Version 0.9.2, 13 October 2026.
 
 The history here starts at 0.4.0, one commit per release from then on. The private repository began on 8 October 2026 and held about 60 commits and
 13 release tags by this version, all tagged on 13 October; the work itself started in late September.
@@ -135,7 +135,7 @@ on Kirpi held 260 to 280 MB of resident memory inside its 500 MB box, while the 
 ```sh
 python3 limbs/seat/test-seat.py        # 96 checks: the seat, with a temporary home and a fake tmux
 python3 limbs/tilki/run/test-perf.py   # 15 checks: readings from a device that lies, is away, or is refused
-python3 limbs/kirpi/jobs/test-sim.py   # 31 checks: the job switch against a simulated machine
+python3 limbs/kirpi/jobs/test-sim.py   # 35 checks: the job switch against a simulated machine
 ```
 
 These three need no device and no network, and they pass at this version.

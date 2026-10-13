@@ -137,17 +137,29 @@ def shown(text=None):
     except OSError: pass
 
 
-def chat_alive(pid):
+def born(pid):
+    """When that process started, in the kernel's own count; None if it is gone. A process id comes round again,
+    its start time does not: the two together name one process."""
     try:
-        with open(f'/proc/{int(pid)}/comm') as f: return f.read().strip() == 'claude'
-    except (OSError, ValueError, TypeError): return False
+        with open(f'/proc/{int(pid)}/stat') as f: st = f.read()
+        return int(st[st.rindex(')') + 2:].split()[19])
+    except (OSError, ValueError, TypeError, IndexError): return None
 
-def stop_chat(pid):
+def chat_alive(pid, start=None):
+    """Is the very process that took the lease still there (same id AND same start time), and is it the agent?"""
+    try:
+        with open(f'/proc/{int(pid)}/comm') as f: named = f.read().strip() == 'claude'
+    except (OSError, ValueError, TypeError): return False
+    return named and start is not None and born(pid) == start
+
+def stop_chat(pid, start=None):
     """End a chat that has held Kirpi for its whole time while the model's work waits. Its transcript stays, so
-    the worker manager can resume it later."""
-    if chat_alive(pid):
+    the worker manager can resume it later. Only the very process that took the lease is ever signalled."""
+    if chat_alive(pid, start):
         try: os.kill(int(pid), 15)
         except OSError: pass
+
+CLAIM = 120            # seconds a chat lease may stay without a chat process named to it
 
 def switch(to, by, keep_search=False):
     """Make the large model take the shape `to`. Returns '' or what went wrong.
@@ -285,7 +297,8 @@ def cmd_lease(args):
     if wrong: out({'ok': False, 'error': wrong}, 1)
     token, until = secrets.token_hex(8), time.time() + minutes * 60
     write(LEASE, {'token': token, 'job': job, 'holder': holder, 'until': until,   # until: to show
-                  'ends': time.monotonic() + minutes * 60, 'minutes': minutes})      # ends: to decide
+                  'ends': time.monotonic() + minutes * 60, 'minutes': minutes,       # ends: to decide
+                  'since': time.time()})
     shown(f'{job} · lent to {holder} until {time.strftime("%H:%M", time.localtime(until))}')
     if job != 'chat':                                  # a chat's time is judged by `ensure` every minute, which may renew it
         subprocess.run(['systemd-run', '--user', '--quiet', '--collect', f'--unit=kimera-lease-{token[:8]}',
@@ -312,7 +325,9 @@ def cmd_hold(args):
     lock = locked(wait=True)
     l = read(LEASE)
     if not l or l.get('token') != args[0] or l['job'] != 'chat': out({'ok': False, 'error': 'no chat lease with that token'}, 2)
-    l['pid'] = int(args[1]); write(LEASE, l)
+    start = born(args[1])
+    if start is None: out({'ok': False, 'error': 'no such process'}, 2)
+    l['pid'], l['start'] = int(args[1]), start; write(LEASE, l)
     out({'ok': True})
 
 def cmd_chat_end(args):
@@ -365,11 +380,14 @@ def cmd_ensure():
     if not lock: out({'ok': True, 'note': 'a switch is under way'})
     drop(MARK)                                         # we hold the lock, so no switch is under way
     did, l, mode = [], read(LEASE), mode_now()
-    if l and l['job'] == 'chat' and l.get('pid') and not chat_alive(l['pid']):
+    if l and l['job'] == 'chat' and l.get('pid') and not chat_alive(l['pid'], l.get('start')):
         to_rest('the chat ended'); did.append('a chat ended; Kirpi is given back'); l, mode = None, mode_now()
+    elif l and l['job'] == 'chat' and not l.get('pid') and time.time() - l.get('since', 0) > CLAIM:
+        # a lease no chat ever took (its start failed half way): never left to hold the machine
+        to_rest('ensure'); did.append('a chat lease nobody took is ended; Kirpi is given back'); l, mode = None, mode_now()
     elif l and l['job'] == 'chat' and l.get('ends', 0) <= time.monotonic():
         if read(WAITING):                              # its time is up and the model's work waits: the chat stops, resumable
-            stop_chat(l.get('pid')); to_rest('the clock'); did.append('a chat held Kirpi for its whole time while the model was asked for; stopped it')
+            stop_chat(l.get('pid'), l.get('start')); to_rest('the clock'); did.append('a chat held Kirpi for its whole time while the model was asked for; stopped it')
             l, mode = None, mode_now()
         else:                                          # nobody waits: the chat keeps Kirpi
             l['ends'] = time.monotonic() + l.get('minutes', MAX_MINUTES) * 60; l['until'] = time.time() + l.get('minutes', MAX_MINUTES) * 60

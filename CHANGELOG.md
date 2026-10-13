@@ -3,6 +3,13 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.9.2 (2026-10-13)
+
+Found by review of 0.9.0.
+
+- A chat lease nobody took is ended after two minutes, so a start that failed half way cannot hold the machine.
+- The chat is named by process id and start time together, so a reused process id is never mistaken for it.
+
 ## 0.9.1 (2026-10-13)
 
 - The working class is checked on the real machine end to end: the start parked the large model and kept search ready, a wake during the chat was answered queued, the chat named its machine and limit, edited a file and ran a command, its diff came back, and after the chat ended the model loaded by itself in 5 s.
