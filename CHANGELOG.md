@@ -3,6 +3,11 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.10.2 (2026-10-13)
+
+- A bug of 0.10.1, fixed within minutes: a loop reused the variable holding the chat's name, so a chat started under 0.10.1 got the wrong name. A test now pins it.
+- Found by review of 0.10.0: `pull` walks from the root down to the file by folder handle, so a part of the path swapped for a link is refused.
+
 ## 0.10.1 (2026-10-13)
 
 - Found by review of 0.9.3: organization plugins are switched off by the seat at every start, from the plugin folders that could actually load, not from a list written at install time.

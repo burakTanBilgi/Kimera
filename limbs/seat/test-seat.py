@@ -81,6 +81,7 @@ os.makedirs(tmp + '/plugins/synced/org1/p1/.claude-plugin'); json.dump({'name': 
 json.dump({'pluginUsage': {'nagger@synced': {}, 'cc-builtin@builtin': {}, 'bad name!@synced': {}}}, open(tmp + '/.claude.json', 'w'))
 S.sessions = lambda: []
 call(f'start aiden-fifth00001 {root}/e5 {sid}')
+check('the chat keeps its own name whatever plugins are found', '-s aiden-fifth00001 ' in open(rec).read().splitlines()[-1] or any('-s aiden-fifth00001 ' in l for l in open(rec).read().splitlines()))
 check('every organization plugin that could load is off at each start', json.load(open(seatdir + '/settings.json'))['enabledPlugins'] == {'guardish@synced': False, 'nagger@synced': False})
 os.remove(tmp + '/.claude.json'); __import__('shutil').rmtree(tmp + '/plugins')
 S.sessions = lambda: ['aiden-abcdef12']

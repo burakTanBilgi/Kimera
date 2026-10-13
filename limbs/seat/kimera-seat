@@ -514,18 +514,22 @@ def pull(args):
     # a finished program may also lie in a build folder the device row names (`pull_roots`), not only in a seat folder
     where = dict(c, seat_roots=list(c['seat_roots']) + list(c.get('pull_roots', [])))
     under_root(where, args[0])
-    real = os.path.realpath(args[0])
-    under_root(where, real)
     if not REL_RE.fullmatch(args[1]) or len(args[1]) > 400:
         raise Bad('FILE must be a path inside the folder, of a-z, 0-9, _ . - and /, with no step upward')
+    # From the root down to the file, every step is opened inside the handle of the one before and never through a
+    # link. The path is not resolved first and then trusted: a part swapped for a link at any moment is refused.
+    cwd = os.path.normpath(args[0])
+    root = next((r for r in (os.path.realpath(x) for x in where['seat_roots']) if cwd == r or cwd.startswith(r + '/')), None)
+    if root is None:
+        raise Refused('that folder is not under this device\'s seat roots')
+    steps = [x for x in os.path.relpath(cwd, root).split('/') if x != '.'] + args[1].split('/')
     try:
-        at = os.open(real, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-        parts = args[1].split('/')
-        for part in parts[:-1]:
+        at = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        for part in steps[:-1]:
             nxt = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=at)
             os.close(at)
             at = nxt
-        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=at)
+        fd = os.open(steps[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=at)
         os.close(at)
     except OSError:
         raise Refused('there is no such plain file in that folder')
@@ -653,8 +657,8 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     except ValueError:
         raise Refused('the pristine seat settings are not valid JSON; run install-device.sh for this device')
     off = dict(base.get('enabledPlugins') or {})
-    for name in synced_plugins(c['config_dir']):
-        off[name + '@synced'] = False
+    for plugin in synced_plugins(c['config_dir']):
+        off[plugin + '@synced'] = False
     base['enabledPlugins'] = off
     want = json.dumps(base, indent=1)
     cur = os.path.join(seat, 'settings.json')
