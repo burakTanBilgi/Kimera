@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.9.3 (2026-10-13)
+
+- The account's organization plugins are off for seat chats. An empty `enabledPlugins` does not keep a synced plugin out; an explicit `"name@synced": false` does, so the installer sets that for every synced plugin the device knows.
+
 ## 0.9.2 (2026-10-13)
 
 Found by review of 0.9.0.

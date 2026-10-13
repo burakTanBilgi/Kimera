@@ -81,6 +81,31 @@ fi
   echo "settings.json differs from the known baseline and no AIDEN_HOOK_SCRIPT was given: inspect ~/.config/kimera/seat/settings.json, then delete it or rerun with AIDEN_HOOK_SCRIPT" >&2
   exit 3
 }
+# Plugins off for seat chats (Tan, 13 Oct: an unnecessary tool for a seat is disabled). The account's organization
+# plugins load into every chat whatever the empty enabledPlugins says; only an explicit `"name@synced": false` keeps
+# one out (checked on Caretta: 35 agent definitions gone with it). Every synced plugin this device knows is set to
+# false in the seat's settings and in its pristine copy; nothing else in them changes. Names only: letters, digits, - _ .
+"${SSH[@]}" "python3 - '$CFG'" <<'P'
+import json, os, re, sys
+seat = os.path.expanduser('~/.config/kimera/seat')
+pr, cur = os.path.join(seat, 'settings.pristine.json'), os.path.join(seat, 'settings.json')
+try:
+    known = json.load(open(os.path.join(sys.argv[1], '.claude.json'))).get('pluginUsage', {})
+except (OSError, ValueError):
+    known = {}
+base = json.load(open(pr))
+off = dict(base.get('enabledPlugins') or {})
+for name in known:
+    if re.fullmatch(r'[A-Za-z0-9._-]{1,80}@synced', name):
+        off[name] = False
+if off != (base.get('enabledPlugins') or {}):
+    base['enabledPlugins'] = off
+    text = json.dumps(base, indent=1)
+    for p in (pr, cur):
+        open(p + '.new', 'w').write(text)
+        os.replace(p + '.new', p)
+print('plugins off for seat chats: %d' % sum(1 for v in off.values() if v is False))
+P
 for r in $ROOTS; do "${SSH[@]}" "mkdir -p '$r' && chmod 700 '$r'"; done
 # Trust the seat roots once, so a chat in a new folder under them does not stop at the folder-trust question.
 "${SSH[@]}" "python3 - '$CFG' $ROOTS" <<'P'
