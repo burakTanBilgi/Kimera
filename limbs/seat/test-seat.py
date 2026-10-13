@@ -253,7 +253,7 @@ check('no mode refused when a list is set', call(f'start aiden-boxed0001 {root}/
 rc, out = call(f'start aiden-boxed0001 {root}/e {sid2} plan sonnet Read,Grep,Glob,Bash')
 log2 = open(rec).read()
 check('device narrows the tools', '--tools Read,Grep,Glob ' in log2 and 'Bash' not in log2.split('new-session')[-1])
-check('the private Node and the Rust tools are first on the chat\'s PATH', '-- env PATH=%s/kimera/node/bin:%s/.cargo/bin:' % (tmp, tmp) in log2 and 'PATH=' not in log)
+check('the private Node and the Rust tools are last on the chat\'s PATH, never first', (':%s/kimera/node/bin:%s/.cargo/bin ' % (tmp, tmp)) in log2 and '-- env PATH=%s/kimera' % tmp not in log2 and '-- env PATH=%s/.cargo' % tmp not in log2 and 'PATH=' not in log)
 check('plan mode starts, boxed', rc == 0 and 'systemd-run --user --scope --quiet --collect -p MemoryMax=500M -p MemorySwapMax=0 -- env PATH=' in log2 and ' /bin/claude --session-id' in log2)
 S.TMUX_SHA256 = '0' * 64  # a swapped binary is refused, never executed
 check('a private tmux that is not the expected package is refused', call('has aiden-abcdef12')[0] == 2)

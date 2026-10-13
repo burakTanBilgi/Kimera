@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.8.5 (2026-10-13)
+
+- Found by review of 0.8.4: the added folders go at the end of a chat's PATH, not the start, so a program dropped there by one chat cannot stand in for `git` or `sh` in later chats.
+
 ## 0.8.4 (2026-10-13)
 
 - The user's Rust tools (`~/.cargo/bin`, when it exists) are on a seat chat's PATH; a chat started over ssh does not get what a login shell has.
