@@ -1,0 +1,50 @@
+# Changelog
+
+Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
+This is the public history; it leaves out changes to the private parts.
+
+## 0.4.0 (2026-10-13)
+
+- The public part: this repository, built from an allowlist by a script that refuses to produce anything unless the tests pass inside the tree and a scan finds no address, user, host or mail address.
+- Files shown here no longer hold a user or host: the real-machine test and the experiment's tunnel take them from the environment.
+- The log behind "5.4 tokens a second" is in the repository.
+
+## 0.3.1 (2026-10-13)
+
+- `kimera-perf` fails closed. Any surprise now writes `unknown` as the device's latest reading; before, the program stopped and an old `up` stayed in the file. Found by review of 0.3.0.
+
+## 0.3.0 (2026-10-13)
+
+- The latest reading of each device is kept in a file other programs may read, so a viewer never calls a device. It is the reading already taken every minute; no extra call is made.
+
+## 0.2.1 to 0.2.5 (2026-10-13)
+
+Fixes found by review of the release before each.
+
+- A device can narrow the tools a chat is given, whatever was asked for.
+- The private tmux on a device without the package is a fixed path checked by its sha256, and no library path comes from a file a chat can write.
+- `authorize-device.sh` can add only the keys that are named, and never leaves a weaker line for a key it did not add. A line is kept only if it is exactly the line it would write.
+
+## 0.2.0 (2026-10-13)
+
+- The 4 GB machine takes one read-only chat: plan mode only, in a 500 MB memory box, when 650 MB is free. The local model keeps the rest.
+- New per-device settings: allowed modes, a memory box, a private tmux.
+- `sample` answers for every device.
+
+## 0.1.1 to 0.1.3 (2026-10-13)
+
+Fixes found by review of the release before each.
+
+- No MCP server of any scope loads in a device chat, and the empty configuration is passed inline, not as a file a chat can write.
+- An unreadable user settings file refuses the start; it was read as empty.
+- A seat settings file that drifted from its pristine copy is restored with a line in the log.
+- The read-only agent takes its prompt on stdin, so a prompt cannot become an option.
+
+## 0.1.0 (2026-10-13)
+
+The first tagged release.
+
+- The seat road: `kimera-run DEVICE VERB` over a key limited to one command, to `kimera-seat` on the device. Ten verbs, admission on the device, one lock per device, a log line per verb, shapes checked on both ends.
+- The transcript mirror (staged, bounded, read-only) and the hooks forward (one loopback port, a token per device).
+- The performance record: one line per minute while a chat runs.
+- The job switch for the local model: leases, on-demand parking, a timer that puts things right.

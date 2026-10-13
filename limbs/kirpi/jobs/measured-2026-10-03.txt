@@ -1,0 +1,29 @@
+START 2026-10-03 01:12 available=1133MB mind=active
+qwen at rest: rss=3085MB anon=2150MB peak=3365MB
+download qwen3.5-4b-mmproj-F16.gguf 642MB in 44.6s sha256=cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864
+download Qwen3-Embedding-0.6B-Q8_0.gguf 610MB in 48.1s sha256=06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439
+download ggml-base.bin 142MB in 10.2s sha256=60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe
+download ggml-small-q5_1.bin 182MB in 13.5s sha256=ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb
+whisper.cpp v1.9.4 built in 61.4s: ok
+embed: ready in 1.6s, rss=902MB anon=284MB peak=902MB, available=1508MB
+embed: one long text 494 tokens in 2.6s = 191 tokens/s, 1024 numbers
+embed: ten short texts 180 tokens in 0.8s
+embed: English/Turkish same meaning 0.51, unrelated 0.30
+qwen while the embedder is loaded: seconds=12.8 in=25 out=40 read_tps=4.1 write_tps=5.8 text="- The red squirrel scurries through the canopy searching for acorns.\n- A deer grazes quietly among the ferns at the forest's edge.\n- A woodpecker taps rhythm"
+embed: after use rss=639MB anon=24MB peak=1472MB, available=1372MB
+embed: lowest available during the test 769MB
+hear base, with qwen+embedder: 2.4s for an 11 s clip; load time = 219.82 ms;encode time = 1659.16 ms / 2 runs ( 829.58 ms per run);decode time = 25.30 ms / 3 runs ( 8.43 ms per run);total time = 2359.58 ms;; lowest available 1116MB; text=[00:00:00.000 --> 00:00:10.500]   And so my fellow Americans ask not what your country can do for you, ask what you can do for your country. 
+hear small-q5, with qwen+embedder: 8.3s for an 11 s clip; load time = 214.95 ms;encode time = 7074.90 ms / 2 runs ( 3537.45 ms per run);decode time = 34.29 ms / 2 runs ( 17.15 ms per run);total time = 8238.99 ms;; lowest available 946MB; text=[00:00:00.000 --> 00:00:11.000]   And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country 
+hear base, with qwen: 2.4s for an 11 s clip; load time = 168.41 ms;encode time = 1705.54 ms / 2 runs ( 852.77 ms per run);decode time = 23.68 ms / 3 runs ( 7.89 ms per run);total time = 2349.76 ms;; lowest available 1112MB; text=[00:00:00.000 --> 00:00:10.500]   And so my fellow Americans ask not what your country can do for you, ask what you can do for your country. 
+hear small-q5, with qwen: 8.5s for an 11 s clip; load time = 205.21 ms;encode time = 7343.97 ms / 2 runs ( 3671.98 ms per run);decode time = 26.33 ms / 2 runs ( 13.17 ms per run);total time = 8520.42 ms;; lowest available 946MB; text=[00:00:00.000 --> 00:00:11.000]   And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country 
+switch: text model stop and start, ready in 6.3s
+switch: first answer after it seconds=7.4 in=25 out=40 read_tps=36.5 write_tps=5.9 text="- The red squirrel scurries through the canopy searching for acorns.\n- A deer grazes quietly among the ferns at the forest's edge.\n- A woodpecker taps rhythm"
+eyes: text model stopped, available=3287MB
+eyes: ready in 8.9s, rss=3344MB anon=2584MB peak=3389MB, available=728MB
+eyes: plain text seconds=7.7 in=25 out=40 read_tps=29.5 write_tps=5.8 text="- The red squirrel scurries through the canopy searching for acorns.\n- A deer grazes quietly among the ferns at the forest's edge.\n- A woodpecker taps rhythm"
+eyes: "Write out every word you can read in this picture, nothing else." seconds=38.8 in=803 out=25 read_tps=23.3 write_tps=5.6 text='The Riddle Moth\nThe moth is thinking...\nSolved: 0\nGuess\nAsk for a hint'
+eyes: "Describe this picture in two sentences." seconds=50.6 in=796 out=92 read_tps=23.3 write_tps=5.6 text='This image displays a dark-themed riddle game interface titled "The Riddle Moth," featuring a glowing orange and black butterfly illustration above a central message box that reads "The moth is thinking..." Below it, a score counter shows "Solved: 0," followed by an empty input field and two yellow buttons labeled "Guess" and "Ask for a hint." The overall design suggests an interactive puzzle wher'
+eyes: after use rss=3275MB anon=2526MB peak=3396MB, available=790MB
+eyes: lowest available during the test 540MB, swap used 2021MB
+end: text model back on 8080
+DONE 01:18

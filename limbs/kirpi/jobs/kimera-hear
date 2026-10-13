@@ -1,0 +1,20 @@
+#!/bin/bash
+# kimera-hear FILE [LANGUAGE]: speech into text, on Kirpi, beside the text model.
+# LANGUAGE is auto (default), tr, en, ... Prints the words with their times.
+# Sound files are read as they are; a video needs ffmpeg.
+set -u
+K=$HOME/kimera; F=${1:-}; L=${2:-auto}
+[ -f "$F" ] || { echo "kimera-hear: no such file: $F" >&2; exit 2; }
+if systemctl --user -q is-active kimera-eyes.service || [ -e "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/kimera/switching.json" ]; then
+  echo "kimera-hear: not while the model has its eyes; try after the lease" >&2; exit 2; fi
+exec 9> "${XDG_RUNTIME_DIR:-/tmp}/kimera-hear.lock"
+flock -n 9 || { echo "kimera-hear: already hearing something; one at a time" >&2; exit 2; }
+T=""; trap 'rm -f "$T" /run/kimera/jobs/hear' EXIT
+case "${F,,}" in
+  *.wav|*.mp3|*.flac|*.ogg) IN=$F ;;
+  *) command -v ffmpeg >/dev/null || { echo "kimera-hear: this file needs ffmpeg, which is not installed" >&2; exit 3; }
+     T=$(mktemp --suffix=.wav); IN=$T
+     ffmpeg -nostdin -loglevel error -y -i "$F" -vn -ar 16000 -ac 1 -c:a pcm_s16le "$T" || exit 1 ;;
+esac
+echo "hearing · $(basename "$F" | cut -c1-40)" > /run/kimera/jobs/hear 2>/dev/null
+"$K/whisper.cpp/build/bin/whisper-cli" -m "$K/models/ggml-small-q5_1.bin" -f "$IN" -l "$L" -t 4 -np

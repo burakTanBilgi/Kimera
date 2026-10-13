@@ -1,0 +1,29 @@
+#!/bin/sh
+# kimera-agent MINUTES PROMPT_FILE OUT_FILE [haiku|sonnet]
+# Runs ONE read-only Claude agent on Kirpi, on the owner's main account only, with both large local models dropped
+# (a lease of the job "agent": see `kimera-job list`). The agent's brain is in the cloud; Kirpi gives it a shell
+# and about 400 MB. It may only read: Read, Grep, Glob. Its memory is capped. When it ends, or the minutes run
+# out, the lease is released and the text model comes back (or stays parked, in on-demand mode).
+# The answer goes to OUT_FILE, errors to OUT_FILE.err. Exit 0 yes, 1 failed, 2 not understood.
+set -u
+[ $# -ge 3 ] || { echo "usage: kimera-agent MINUTES PROMPT_FILE OUT_FILE [haiku|sonnet]"; exit 2; }
+MIN=$1; PROMPT=$2; OUT=$3; MODEL=${4:-sonnet}
+case $MODEL in haiku|sonnet) ;; *) echo "model: haiku or sonnet"; exit 2 ;; esac
+case $MIN in ''|*[!0-9]*) echo "MINUTES must be a number"; exit 2 ;; esac
+MIN=$((10#$MIN))  # "08" is a number, not bad octal
+[ "$MIN" -ge 1 ] && [ "$MIN" -le 120 ] || { echo "MINUTES must be 1 to 120"; exit 2; }
+[ -r "$PROMPT" ] || { echo "cannot read $PROMPT"; exit 2; }
+# which agent program to run: one path in ~/.config/kimera/agent-cli, else the plain one
+CLI=$(cat "$HOME/.config/kimera/agent-cli" 2>/dev/null) || CLI=
+[ -x "${CLI:-}" ] || CLI=$HOME/.local/bin/claude
+J=$HOME/kimera/bin/kimera-job
+r=$("$J" lease agent --minutes "$MIN" --holder agent) || { echo "no lease: $r"; exit 1; }
+tok=$(printf '%s' "$r" | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])') || exit 1
+trap '"$J" release "$tok" >/dev/null 2>&1' EXIT INT TERM
+# the prompt goes in on stdin, never as an argument: a file starting with "-" cannot become an option.
+# --tools is the real limit (the only tools that exist); --allowedTools only skips the question for them.
+systemd-run --user --scope --quiet --collect -p MemoryMax=2300M -p MemorySwapMax=0 -- \
+  timeout "$((MIN * 60))" "$CLI" -p --model "$MODEL" \
+  --setting-sources user --settings '{"disableAllHooks":true,"enabledPlugins":{}}' \
+  --tools "Read,Grep,Glob" --allowedTools "Read,Grep,Glob" --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+  --max-turns 30 < "$PROMPT" > "$OUT" 2> "$OUT.err"

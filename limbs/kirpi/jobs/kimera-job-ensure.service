@@ -1,0 +1,6 @@
+[Unit]
+Description=Kimera: put Kirpi's jobs right (a lease that ran out, nothing running)
+
+[Service]
+Type=oneshot
+ExecStart=%h/kimera/bin/kimera-job ensure

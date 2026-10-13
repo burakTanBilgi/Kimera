@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""kimera-device: what a device can take now. Read-only; AIDEN calls this before a remote seat starts.
+  kimera-device list                    the devices in devices.json
+  kimera-device status DEVICE           one line of JSON: reachable, memory, load, disk, Claude Code version, admission
+  kimera-device admit DEVICE            prints `ok` or one refusal sentence. Exit 0 ok, 2 refused, 3 device away, 4 bad arguments
+Rows live in ~/.config/kimera/devices.json (an example is in limbs/tilki/device/devices.example.json).
+"""
+import json, os, subprocess, sys
+
+CONF = os.environ.get('KIMERA_DEVICES', os.path.expanduser('~/.config/kimera/devices.json'))
+PROBE = r'''
+a=$(awk '/MemAvailable/{print int($2/1024)}' /proc/meminfo); l=$(awk '{print $2}' /proc/loadavg)
+n=$(nproc); d=$(df -Pk "$HOME" | awk 'NR==2{printf "%.1f", $4/1048576}')
+t=$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -n | tail -1)
+heavy=$(ps -eo comm | grep -cE '^(rustc|cargo|vitest|node)$')
+chats=$(ps -eo args | grep -c "[c]laude .*--session-id\|[c]laude .*--resume")
+v=$("$CLAUDE" --version 2>/dev/null | head -1)
+c=0; [ -d "$CFG" ] && c=1
+echo "$a $l $n $d ${t:-0} $heavy $chats $c ${v:-none}"
+'''
+def load():
+    try: return json.load(open(CONF))
+    except Exception as e: sys.exit(f'cannot read {CONF}: {e}')
+def probe(row):
+    cmd = row['ssh'] + [f'CLAUDE={row["claude"]} CFG={row["config_dir"]} sh -s']
+    try:
+        r = subprocess.run(cmd, input=PROBE, capture_output=True, text=True, timeout=30)
+        p = r.stdout.split()
+        if r.returncode != 0 or len(p) < 9: return None
+        return dict(avail_mb=int(p[0]), load1=float(p[1]), cores=int(p[2]), disk_free_gb=float(p[3]), temp_c=int(p[4]) // 1000,
+                    heavy_procs=int(p[5]), chats=int(p[6]), config_dir_present=p[7] == '1', claude_version=' '.join(p[8:]))
+    except Exception: return None
+def verdict(row, s):
+    if not row.get('chat'): return False, row.get('why_not', 'this device does not take chats')
+    L = row['limits']
+    if s['claude_version'] == 'none' or not s['config_dir_present']: return False, 'Claude Code is not installed or not logged in there'
+    if s['chats'] >= L.get('max_chats', 1): return False, f"{s['chats']} chat(s) already run there (limit {L.get('max_chats', 1)})"
+    if s['avail_mb'] < L['avail_mb']: return False, f"only {s['avail_mb']} MB of memory available (needs {L['avail_mb']})"
+    if s['disk_free_gb'] < L['disk_gb']: return False, f"only {s['disk_free_gb']} GB of disk free (needs {L['disk_gb']})"
+    if s['load1'] > s['cores']: return False, f"load {s['load1']} is above its {s['cores']} cores"
+    if s['temp_c'] >= 85: return False, f"it is hot ({s['temp_c']} C)"
+    if s['heavy_procs'] >= 3: return False, 'a build or test run is using it now'
+    return True, 'ok'
+a = sys.argv[1:]
+d = load(); d.pop('_note', None)
+if a[:1] == ['list']: print(json.dumps(list(d))); sys.exit(0)
+if len(a) != 2 or a[0] not in ('status', 'admit') or a[1] not in d: print(__doc__); sys.exit(4)
+row = d[a[1]]
+if a[0] == 'admit':  # one policy, on the device: kimera-seat decides, kimera-run carries it
+    r = subprocess.run([os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'run', 'kimera-run'), a[1], 'admit'],
+                       capture_output=True, text=True)
+    print(r.stdout.strip() or 'device away'); sys.exit(r.returncode)
+s = probe(row)
+if s is None:
+    if a[0] == 'status': print(json.dumps({'device': a[1], 'reachable': False}))
+    else: print('device away')
+    sys.exit(3)
+ok, why = verdict(row, s)
+if a[0] == 'admit': print('ok' if ok else why); sys.exit(0 if ok else 2)
+print(json.dumps({'device': a[1], 'reachable': True, **s, 'takes_chats': bool(row.get('chat')), 'admit': ok, 'reason': why,
+                  'hook_port': row['hook_port'], 'reference_claude': '2.1.296'}))

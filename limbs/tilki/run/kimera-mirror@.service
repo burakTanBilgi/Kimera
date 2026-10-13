@@ -1,0 +1,8 @@
+[Unit]
+Description=Kimera transcript mirror from %i (read-only copy)
+
+[Service]
+Type=oneshot
+ExecStart=%h/Desktop/Projects/Kimera/limbs/tilki/run/kimera-mirror %i
+Nice=10
+MemoryMax=128M

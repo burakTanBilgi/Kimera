@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""kimera-job: says what Kirpi is running and changes it, with no person at Kirpi.
+
+Called over ssh by AIDEN's agent:  ssh USER@KIRPI kimera/bin/kimera-job status
+
+  status                      one line of JSON: what runs, its state, where, the lease
+  list                        the five jobs and how each is served
+  lease JOB --minutes N [--holder NAME]
+                              borrow Kirpi for a job that needs the large model changed
+  release TOKEN               give it back; Kirpi returns to text
+  ensure                      put things right (run by a timer every minute)
+  wake [--holder NAME]        load the text model if it is parked, and say when it is ready
+  ondemand on|off|status      on: the text model is dropped after 2 minutes with no work and loaded again
+                              by `wake`; off (the default): it stays loaded, as always
+
+One large model at a time. The text model is the resting state. Small things
+(search, hear) run beside it. Every answer is one line of JSON. Exit code 0 is
+yes, 2 is a refusal, 1 is a failure.
+"""
+import fcntl, json, os, secrets, shutil, subprocess, sys, time, urllib.request
+
+HOME = os.path.expanduser('~')
+RUN = os.path.join(os.environ.get('XDG_RUNTIME_DIR', f'/run/user/{os.getuid()}'), 'kimera')
+LEASE, MARK, LOCK = (os.path.join(RUN, n) for n in ('lease.json', 'switching.json', 'lock'))
+LOG = os.path.join(HOME, 'kimera', 'jobs.log')
+SHOWN = '/run/kimera/jobs/lease'          # one line on the rest screen while Kirpi is lent
+SELF = os.path.realpath(__file__)
+
+TEXT_URL, SEARCH_URL = 'http://127.0.0.1:8080', 'http://127.0.0.1:8081'
+ALIAS, CTX = 'qwen3.5-4b', 4096
+# The large model, in its two shapes. Both answer on the same address with the same name.
+MODES = {'text': 'kimera-mind.service', 'see': 'kimera-eyes.service'}
+REST = 'text'
+SEARCH = 'kimera-search.service'
+SEARCH_ALIAS = 'embeddinggemma-2'
+# The five jobs: which shape of the large model each needs, and what else.
+JOBS = {
+    'file':   {'needs': 'text', 'how': 'the text model'},
+    'read':   {'needs': 'text', 'how': 'the text model, at most 3,000 tokens a piece'},
+    'search': {'needs': 'text', 'how': 'the search model beside it, on 8081'},
+    'hear':   {'needs': 'text', 'how': 'kimera-hear FILE, beside the text model'},
+    'see':    {'needs': 'see',  'how': 'kimera-ocr FILE for words; a lease for the model with eyes'},
+    'agent':  {'needs': None,   'how': 'a lease: both large models are dropped so a Claude agent has the memory (kimera-agent)'},
+}
+WAIT_ANSWER = 120      # seconds a running answer may take before a switch cuts it
+WAIT_READY = 120       # seconds a model may take to come up
+MAX_MINUTES = 120
+VERSION = 2
+ONDEMAND = os.path.join(HOME, 'kimera', 'ondemand')      # present: the model is loaded only while work arrives
+ACTIVITY, WOKE, PARKED = (os.path.join(RUN, n) for n in ('activity.json', 'woke.json', 'parked.json'))   # PARKED: dropped on purpose, not crashed
+IDLE_OFF = 120         # seconds with no work before the text model is dropped, in on-demand mode
+
+
+def out(obj, code=0):
+    print(json.dumps(obj, ensure_ascii=False)); sys.exit(code)
+
+def log(text):
+    try:
+        with open(LOG, 'a') as f: f.write(time.strftime('%F %T ') + text + '\n')
+    except OSError: pass
+
+def sysctl(*args):
+    return subprocess.run(('systemctl', '--user') + args, capture_output=True, text=True)
+
+def active(unit):
+    return sysctl('is-active', unit).stdout.strip() == 'active'
+
+def get(url, timeout=3):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r: return r.status, r.read()
+    except Exception: return 0, b''
+
+def healthy(base):
+    return get(base + '/health')[0] == 200
+
+def busy():
+    code, body = get(TEXT_URL + '/slots')
+    try: return code == 200 and any(s.get('is_processing') for s in json.loads(body))
+    except ValueError: return False
+
+def hearing():
+    return subprocess.run(['pgrep', '-x', 'whisper-cli'], capture_output=True).returncode == 0
+
+def ondemand():
+    return os.path.exists(ONDEMAND)
+
+def totals():
+    """Tokens read plus written since the model started, from llama.cpp's own counters; None if unreadable."""
+    code, body = get(TEXT_URL + '/metrics')
+    if code != 200: return None
+    t = 0.0
+    for line in body.decode('utf-8', 'replace').splitlines():
+        if line.startswith(('llamacpp:prompt_tokens_total', 'llamacpp:tokens_predicted_total')):
+            try: t += float(line.split()[-1])
+            except ValueError: pass
+    return t
+
+def idle_for(state, now, total, working, woke):
+    """How long the model has had no work. state is what was seen last time: {'total', 'changed'}.
+    Work is a running answer, a changed token count, an unreadable count, or a wake just now."""
+    if not state or total is None or state.get('total') != total or working:
+        state = {'total': total, 'changed': now}
+    return state, now - max(state['changed'], woke or 0)
+
+def read(path):
+    try:
+        with open(path) as f: return json.load(f)
+    except (OSError, ValueError): return None
+
+def write(path, obj):
+    with open(path + '.new', 'w') as f: json.dump(obj, f)
+    os.replace(path + '.new', path)
+
+def drop(path):
+    try: os.remove(path)
+    except OSError: pass
+
+def mode_now():
+    on = [m for m, u in MODES.items() if active(u)]
+    return on[0] if len(on) == 1 else None
+
+def lease_now():
+    l = read(LEASE)
+    return l if l and l.get('ends', 0) > time.monotonic() else None
+
+def shown(text=None):
+    try:
+        if text is None: drop(SHOWN)
+        else:
+            with open(SHOWN, 'w') as f: f.write(text + '\n')
+    except OSError: pass
+
+
+def switch(to, by):
+    """Make the large model take the shape `to`. Returns '' or what went wrong.
+    A failed switch always ends on the text model."""
+    was = mode_now()
+    if to is None and was is None and not any(active(u) for u in MODES.values()):
+        return ''
+    if was == to and to is not None and healthy(TEXT_URL):
+        return ''
+    write(MARK, {'from': was, 'to': to, 'since': time.time()})
+    try:
+        t = time.time()
+        while (busy() or (to != REST and hearing())) and time.time() - t < WAIT_ANSWER: time.sleep(1)
+        waited, cut = time.time() - t, busy()
+        if to is None:                                 # neither large model: the room is for an agent
+            for u in list(MODES.values()) + [SEARCH]: sysctl('stop', u)
+            if hearing(): subprocess.run(['pkill', '-x', 'whisper-cli']); cut = True
+            ok = not any(active(u) for u in MODES.values())
+            log(f'switch {was} -> nothing by {by}: waited {waited:.0f}s for an answer{", cut it" if cut else ""}; {"done" if ok else "STILL RUNNING"}')
+            if ok: drop(ACTIVITY); return ''
+            sysctl('start', MODES[REST]); back = wait_ready(REST); start_search()
+            log(f'fell back to {REST}: {"ready" if back else "DID NOT COME UP"}')
+            return f'the model did not stop; Kirpi is back on {REST}'
+        if to != REST:                                 # the model with eyes needs the room
+            sysctl('stop', SEARCH)
+            if hearing(): subprocess.run(['pkill', '-x', 'whisper-cli']); cut = True
+        sysctl('start', MODES[to])                     # the unit files make the other one stop first
+        ok = wait_ready(to)
+        if ok: drop(ACTIVITY); drop(PARKED); write(WOKE, {'at': time.time(), 'by': by})     # a fresh model: the idle clock starts now
+        log(f'switch {was} -> {to} by {by}: waited {waited:.0f}s for an answer'
+            f'{", cut it" if cut else ""}; {"ready" if ok else "DID NOT COME UP"} after {time.time()-t:.0f}s')
+        if ok and to == REST: start_search()
+        if ok: return ''
+        if to != REST:
+            sysctl('start', MODES[REST]); back = wait_ready(REST); start_search()
+            log(f'fell back to {REST}: {"ready" if back else "DID NOT COME UP"}')
+        return f'{to} did not come up' + ('' if to == REST else f'; Kirpi is back on {REST}')
+    finally:
+        drop(MARK)
+
+def start_search():
+    sysctl('start', SEARCH)
+    t = time.time()
+    while not healthy(SEARCH_URL) and time.time() - t < 15: time.sleep(0.3)
+
+def wait_ready(mode):
+    t = time.time()
+    while time.time() - t < WAIT_READY:
+        if mode_now() == mode and healthy(TEXT_URL): return True
+        time.sleep(0.5)
+    return False
+
+def to_rest(by):
+    """End any lease and return to the text model."""
+    l = read(LEASE)
+    drop(LEASE); shown(None)
+    if l: sysctl('stop', f'kimera-lease-{l["token"][:8]}.timer')
+    if ondemand() and l and JOBS[l['job']]['needs'] is None:               # an agent's lease ended: stay parked until `wake`
+        write(PARKED, {'at': time.time(), 'by': by}); return ''
+    return switch(REST, by)
+
+
+def status():
+    mark, mode, l = read(MARK), mode_now(), lease_now()
+    if mark and time.time() - mark.get('since', 0) < WAIT_ANSWER + 2 * WAIT_READY + 30:
+        state, mode = 'switching', mark.get('to')
+    elif mode and healthy(TEXT_URL): state = 'ready'
+    elif mode or any(active(u) for u in MODES.values()): state = 'switching'   # loading
+    else: state = 'off'
+    ctx = CTX
+    if state == 'ready':
+        try: ctx = json.loads(get(TEXT_URL + '/props')[1])['default_generation_settings']['n_ctx']
+        except (ValueError, KeyError, TypeError): pass
+    search = ('ready' if healthy(SEARCH_URL) else 'starting') if active(SEARCH) else 'off'
+    hear = 'ready' if shutil.which('ffmpeg') else 'ready for sound files; a video needs ffmpeg, which is not installed'
+    ocr = 'ready' if shutil.which('tesseract') else 'not installed'
+    text_ok = 'ready' if state == 'ready' else state
+    jobs = {
+        'file': text_ok, 'read': text_ok,
+        'search': search if mode != 'see' else 'off while the model has its eyes',
+        'hear': hear if mode != 'see' else 'off while the model has its eyes',
+        'see': {'words': ocr, 'picture': 'ready' if (mode == 'see' and state == 'ready') else 'needs a lease'},
+    }
+    since = None
+    if state == 'ready':   # when the model that answers now was started
+        stamp = sysctl('show', '-p', 'ActiveEnterTimestamp', '--value', MODES[mode]).stdout.split()
+        if len(stamp) >= 3: since = f'{stamp[1]} {stamp[2]}'
+    return {'version': VERSION, 'host': os.uname().nodename, 'job': mode or 'none', 'state': state, 'since': since,
+            'on_demand': ondemand(), 'parked': ondemand() and state == 'off', 'wake': 'kimera-job wake',
+            'endpoint': TEXT_URL, 'alias': ALIAS, 'ctx': ctx,
+            'busy': busy() if state == 'ready' else False, 'jobs': jobs,
+            'search': {'endpoint': SEARCH_URL, 'alias': SEARCH_ALIAS, 'state': search},
+            'lease': l and {'job': l['job'], 'holder': l['holder'], 'seconds_left': int(l['ends'] - time.monotonic()),
+                            'until': time.strftime('%H:%M:%S', time.localtime(l['until']))}}
+
+
+def locked(wait):
+    """Hold the one lock. Two callers never switch at the same time."""
+    f = open(LOCK, 'w')
+    try: fcntl.flock(f, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
+    except OSError: return None
+    return f
+
+def cmd_lease(args):
+    if not args or args[0] not in JOBS:
+        out({'ok': False, 'error': f'unknown job {args[0] if args else ""!r}', 'known': list(JOBS)}, 2)
+    job, minutes, holder = args[0], None, 'unnamed'
+    rest = args[1:]
+    while rest:
+        if rest[0] == '--minutes' and len(rest) > 1 and rest[1].isdigit(): minutes = int(rest[1])
+        elif rest[0] == '--holder' and len(rest) > 1: holder = rest[1][:40]
+        else: out({'ok': False, 'error': f'not understood: {rest[0]!r}'}, 2)
+        rest = rest[2:]
+    if JOBS[job]['needs'] == REST:
+        out({'ok': True, 'lease': None, 'job': job, 'note': f'{job} runs with the text model; no lease is needed'})
+    if minutes is None or not 1 <= minutes <= MAX_MINUTES:
+        out({'ok': False, 'error': f'--minutes N is needed, 1 to {MAX_MINUTES}'}, 2)
+    lock = None
+    for _ in range(25):                                # ensure holds the lock for a moment while it probes; wait up to 5 s
+        lock = locked(wait=False)
+        if lock: break
+        time.sleep(0.2)
+    if not lock: out({'ok': False, 'error': 'a switch is under way; try again in a moment'}, 2)
+    l = lease_now()
+    if l: out({'ok': False, 'error': 'Kirpi is already lent', 'holder': l['holder'], 'job': l['job'],
+               'until': time.strftime('%H:%M:%S', time.localtime(l['until']))}, 2)
+    wrong = switch(JOBS[job]['needs'], holder)
+    if wrong: out({'ok': False, 'error': wrong}, 1)
+    token, until = secrets.token_hex(8), time.time() + minutes * 60
+    write(LEASE, {'token': token, 'job': job, 'holder': holder, 'until': until,   # until: to show
+                  'ends': time.monotonic() + minutes * 60})                          # ends: to decide
+    shown(f'{job} · lent to {holder} until {time.strftime("%H:%M", time.localtime(until))}')
+    subprocess.run(['systemd-run', '--user', '--quiet', '--collect', f'--unit=kimera-lease-{token[:8]}',
+                    f'--on-active={minutes}m', '--timer-property=AccuracySec=1s', SELF, 'expire', token],
+                   capture_output=True)
+    log(f'lease {job} to {holder} for {minutes} min')
+    out({'ok': True, 'token': token, 'job': job, 'until': time.strftime('%H:%M:%S', time.localtime(until)),
+         'endpoint': TEXT_URL, 'alias': ALIAS, 'ctx': CTX})
+
+def cmd_release(args, expired=False):
+    if len(args) != 1: out({'ok': False, 'error': 'release TOKEN'}, 2)
+    lock = locked(wait=True)
+    l = read(LEASE)
+    if not l or l.get('token') != args[0]:
+        out({'ok': False, 'error': 'no lease with that token'}, 0 if expired else 2)
+    wrong = to_rest('the clock' if expired else l['holder'])
+    log(f'lease of {l["job"]} by {l["holder"]} ' + ('ran out' if expired else 'released'))
+    parked = ondemand() and not wrong and mode_now() is None
+    out({'ok': not wrong, 'job': 'none' if parked else REST, **({'parked': True, 'wake': 'kimera-job wake'} if parked else {}),
+         **({'error': wrong} if wrong else {})}, 1 if wrong else 0)
+
+def cmd_wake(args):
+    holder = 'unnamed'
+    if args[:1] == ['--holder'] and len(args) == 2: holder = args[1][:40]
+    elif args: out({'ok': False, 'error': 'wake [--holder NAME]'}, 2)
+    lock = locked(wait=True)
+    l = lease_now()
+    if l and JOBS[l['job']]['needs'] != REST:
+        out({'ok': False, 'error': f'Kirpi is lent for {l["job"]} until {time.strftime("%H:%M:%S", time.localtime(l["until"]))}',
+             'holder': l['holder'], 'job': l['job'], 'seconds_left': int(l['ends'] - time.monotonic()),
+             'until': time.strftime('%H:%M:%S', time.localtime(l['until']))}, 2)
+    wrong = switch(REST, holder)
+    if wrong: out({'ok': False, 'error': wrong}, 1)
+    drop(PARKED); write(WOKE, {'at': time.time(), 'by': holder})
+    out({'ok': True, 'endpoint': TEXT_URL, 'alias': ALIAS, 'ctx': CTX, 'on_demand': ondemand(),
+         'dropped_after_idle_seconds': IDLE_OFF if ondemand() else None})
+
+def cmd_ondemand(args):
+    if len(args) != 1 or args[0] not in ('on', 'off', 'status'):
+        out({'ok': False, 'error': 'ondemand on|off|status'}, 2)
+    if args[0] == 'status': out({'ok': True, 'on_demand': ondemand(), 'dropped_after_idle_seconds': IDLE_OFF})
+    lock = locked(wait=True)
+    if args[0] == 'on':
+        open(ONDEMAND, 'w').close(); drop(ACTIVITY); drop(PARKED); log('on-demand mode on: the text model is dropped after 2 minutes with no work')
+    else:
+        drop(ONDEMAND); drop(PARKED); wrong = '' if lease_now() else switch(REST, 'ondemand off')
+        log('on-demand mode off: the text model stays loaded')
+        if wrong: out({'ok': False, 'error': wrong}, 1)
+    out({'ok': True, 'on_demand': ondemand()})
+
+def cmd_ensure():
+    """Nothing lent and nothing running is never left that way."""
+    lock = locked(wait=False)
+    if not lock: out({'ok': True, 'note': 'a switch is under way'})
+    drop(MARK)                                         # we hold the lock, so no switch is under way
+    did, l, mode = [], read(LEASE), mode_now()
+    if l and l.get('ends', 0) <= time.monotonic():
+        to_rest('the clock'); did.append('ended a lease that ran out')
+    elif not l and ondemand() and os.path.exists(PARKED) and not any(active(u) for u in MODES.values()):
+        pass                                           # parked on purpose; `wake` loads it again
+    elif not l and mode != REST:
+        w = switch(REST, 'ensure'); did.append(f'started {REST}' if not w else f'could not start {REST}: {w}')
+    elif l and JOBS[l['job']]['needs'] is None and mode is not None:
+        w = switch(None, 'ensure'); did.append('stopped a model that started during an agent lease' + (f' (failed: {w})' if w else ''))
+    elif l and mode != JOBS[l['job']]['needs']:
+        to_rest('ensure'); did.append(f'the lent model was not running; back on {REST}')
+    if mode_now() == REST and not active(SEARCH):
+        start_search(); did.append('started search')
+    if not l and ondemand() and mode_now() == REST and healthy(TEXT_URL):
+        st, idle = idle_for(read(ACTIVITY), time.time(), totals(), busy() or hearing(), (read(WOKE) or {}).get('at'))
+        write(ACTIVITY, st)
+        if idle >= IDLE_OFF and not busy():
+            sysctl('stop', MODES[REST]); drop(ACTIVITY); write(PARKED, {'at': time.time(), 'by': 'ensure'}); did.append(f'parked the text model after {idle:.0f}s with no work')
+    if did: log('ensure: ' + '; '.join(did))
+    out({'ok': True, 'did': did})
+
+
+def main():
+    os.makedirs(RUN, exist_ok=True)
+    a = sys.argv[1:]
+    if not a or a[0] in ('-h', '--help', 'help'): print(__doc__); return
+    if a[0] == 'status' and len(a) == 1: out(status())
+    if a[0] == 'list' and len(a) == 1: out({'jobs': JOBS, 'rest': REST, 'lease_for': [j for j, v in JOBS.items() if v['needs'] != REST]})
+    if a[0] == 'lease': cmd_lease(a[1:])
+    if a[0] == 'release': cmd_release(a[1:])
+    if a[0] == 'expire': cmd_release(a[1:], expired=True)
+    if a[0] == 'ensure' and len(a) == 1: cmd_ensure()
+    if a[0] == 'wake': cmd_wake(a[1:])
+    if a[0] == 'ondemand': cmd_ondemand(a[1:])
+    out({'ok': False, 'error': f'unknown command {a[0]!r}', 'known': ['status', 'list', 'lease', 'release', 'wake', 'ondemand']}, 2)
+
+if __name__ == '__main__':
+    main()

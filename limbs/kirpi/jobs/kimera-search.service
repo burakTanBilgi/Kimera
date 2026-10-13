@@ -1,0 +1,13 @@
+[Unit]
+Description=Kimera: search by meaning (EmbeddingGemma 2, 768 numbers), beside the text model
+
+[Service]
+ExecStart=%h/kimera/llama.cpp/build-new/bin/llama-server \
+  -m %h/kimera/models/embeddinggemma-2-Q8_0.gguf --alias embeddinggemma-2 --embedding \
+  --host 127.0.0.1 --port 8081 -c 2048 -np 1 -t 4 --no-webui
+ExecStartPost=/bin/sh -c 'echo "search · embeddinggemma 2" > /run/kimera/jobs/search'
+ExecStopPost=/bin/rm -f /run/kimera/jobs/search
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,8 @@
+#!/bin/bash
+# kimera-ocr FILE [LANGUAGES]: the words on a picture or a slide, on Kirpi.
+# LANGUAGES is eng+tur by default. Needs no model in memory.
+set -u
+F=${1:-}; L=${2:-eng+tur}
+[ -f "$F" ] || { echo "kimera-ocr: no such file: $F" >&2; exit 2; }
+command -v tesseract >/dev/null || { echo "kimera-ocr: tesseract is not installed" >&2; exit 3; }
+tesseract "$F" stdout -l "$L" 2>/dev/null

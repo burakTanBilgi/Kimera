@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+"""kimera-hooks-forward DEVICE: keep the hooks road open. The device's 127.0.0.1:<hook_port> is forwarded to the same
+port on Tilki, where AIDEN's hooks-only listener runs (never 8731). Started from Tilki, so the device holds no key
+to anything. Runs under kimera-hooks-forward@DEVICE.service (restarts on its own)."""
+import json, os, sys
+conf = os.environ.get('KIMERA_DEVICES', os.path.expanduser('~/.config/kimera/devices.json'))
+row = json.load(open(conf))[sys.argv[1]]
+port = row['hook_port']
+run = row.get('run') or {}
+ssh = row['ssh']
+key = ['-i', os.path.expanduser(run['key'].replace('kimera-seat', 'kimera-hooks')), '-o', 'IdentitiesOnly=yes'] if run.get('authorized') else []
+os.execvp(ssh[0], ssh[:-1] + key + ['-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15',
+          '-o', 'ServerAliveCountMax=3', '-R', '127.0.0.1:%d:127.0.0.1:%d' % (port, port), ssh[-1]])

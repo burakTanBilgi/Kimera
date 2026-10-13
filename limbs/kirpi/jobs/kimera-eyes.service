@@ -1,0 +1,13 @@
+[Unit]
+Description=Kimera: the model with its eyes (Qwen3.5 4B and its projector), in place of the text model
+# Never both at once: starting one stops the other first.
+Conflicts=kimera-mind.service
+After=kimera-mind.service
+
+[Service]
+ExecStart=%h/kimera/llama.cpp/build/bin/llama-server \
+  -m %h/kimera/models/Qwen3.5-4B-Q4_K_S.gguf --mmproj %h/kimera/models/qwen3.5-4b-mmproj-F16.gguf \
+  --alias qwen3.5-4b --host 127.0.0.1 --port 8080 -c 4096 -np 1 -t 4 --metrics --no-webui --cache-ram 0
+ExecStartPost=/bin/sh -c 'echo "holding · qwen3.5 4b with eyes" > /run/kimera/jobs/eyes'
+ExecStopPost=/bin/rm -f /run/kimera/jobs/eyes
+Restart=on-failure

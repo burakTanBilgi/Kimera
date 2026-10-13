@@ -1,0 +1,400 @@
+#!/usr/bin/env python3
+"""kimera-seat: the device end of `kimera-run`. Runs ONLY as an ssh forced command (one narrow key).
+
+The verb and its arguments arrive in SSH_ORIGINAL_COMMAND. Nothing is passed to a shell: every value is
+checked against a fixed shape first, and tmux/claude are started with argument lists.
+
+  admit
+  start  NAME CWD SID [MODE] [MODEL] [TOOLS]
+  resume NAME CWD SID [MODE] [MODEL] [TOOLS]
+  has NAME | capture NAME [ansi] | type NAME (text on stdin) | key NAME KEY | kill NAME | facts NAME
+  sample          one JSON line: memory, load, swap, temperature, and each running chat's resident memory
+
+Answers on stdout, one line (or the pane / one JSON object). Exit codes:
+  0 ok / yes   1 no / failed   2 refused (one sentence)   4 bad arguments   (3 device away is kimera-run's)
+Config: ~/.config/kimera/seat/seat.json. Audit: ~/kimera/run.log (one line per verb, ok / no / failed / refused; `type` logs the length only).
+"""
+import hashlib, fcntl, json, os, re, subprocess, sys, time
+
+HOME = os.path.expanduser('~')
+TMUX_SHA256 = '2967b531cb415b19afbc153bc19eff1c2e461726781a36c27c855a166bb36d4b'  # Debian trixie tmux 3.5a-3 amd64 (usr/bin/tmux)
+CONF = os.path.join(HOME, '.config/kimera/seat/seat.json')
+LOG = os.path.join(HOME, 'kimera/run.log')
+LOCK = os.path.join(HOME, 'kimera/run.lock')
+SOCK = 'aiden'
+MAX_TYPE = 64 * 1024
+MAX_CAPTURE = 256 * 1024
+NAME_RE = re.compile(r'^aiden-[a-z0-9-]{8,36}$')
+SID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+PATH_RE = re.compile(r'^/[A-Za-z0-9_./-]+$')
+MODES = ('plan', 'acceptEdits', 'auto')
+MODELS = ('sonnet', 'opus', 'haiku')
+TOOLSETS = ('Read,Grep,Glob,Bash,Edit,Write', 'Read,Grep,Glob,Bash')
+KEYS = ('Enter', 'C-u', 'Escape', 'C-c')
+
+
+class Refused(Exception):
+    pass
+
+
+class Bad(Exception):
+    pass
+
+
+def audit(verb, name, outcome):
+    try:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, 'a') as f:
+            f.write('%s %s %s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z'), verb, name or '-', outcome))
+    except OSError:
+        pass
+
+
+def conf():
+    try:
+        with open(CONF) as f:
+            return json.load(f)
+    except Exception as e:
+        raise Refused('this device has no seat config (%s)' % e.__class__.__name__)
+
+
+def tmux(*a, **kw):
+    # seat.json may name a private tmux (a device without the package): `tmux` path and `tmux_libs` for its libraries
+    exe, env = 'tmux', None
+    try:
+        c = conf()
+        if c.get('tmux'):  # a device without the package: the unpacked Debian tmux 3.5a-3, at a fixed place, by hash
+            root = os.path.join(HOME, 'kimera/tmux/root')
+            real = os.path.join(root, 'usr/bin/tmux')
+            with open(real, 'rb') as f:
+                if hashlib.sha256(f.read()).hexdigest() != TMUX_SHA256 or os.path.islink(real):
+                    raise Refused('the private tmux is not the expected package binary')
+            exe, env = real, dict(os.environ, LD_LIBRARY_PATH=os.path.join(root, 'usr/lib/x86_64-linux-gnu'))
+    except Refused as e:
+        if 'private tmux' in str(e):
+            raise
+    return subprocess.run([exe, '-L', SOCK] + list(a), capture_output=True, env=env, **kw)
+
+
+def sessions():
+    r = tmux('list-sessions', '-F', '#{session_name}', text=True)
+    return [s for s in r.stdout.split() if s.startswith('aiden-')] if r.returncode == 0 else []
+
+
+def tgt(name):
+    return '=%s:' % name  # exact session match, not tmux's prefix match
+
+
+def need_name(args):
+    if not args or not NAME_RE.fullmatch(args[0]):
+        raise Bad('NAME must be aiden- plus 8 to 36 of a-z, 0-9, -')
+    return args[0]
+
+
+def snapshot():
+    mem = 0
+    for line in open('/proc/meminfo'):
+        if line.startswith('MemAvailable:'):
+            mem = int(line.split()[1]) // 1024
+    load1 = float(open('/proc/loadavg').read().split()[0])
+    st = os.statvfs(HOME)
+    disk = st.f_bavail * st.f_frsize / 2 ** 30
+    temp = 0
+    try:
+        for n in os.listdir('/sys/class/thermal'):
+            if n.startswith('thermal_zone'):
+                try:
+                    temp = max(temp, int(open('/sys/class/thermal/%s/temp' % n).read()) // 1000)
+                except (OSError, ValueError):
+                    pass
+    except OSError:
+        pass
+    heavy = chats = 0
+    for pid in filter(str.isdigit, os.listdir('/proc')):
+        try:
+            comm = open('/proc/%s/comm' % pid).read().strip()
+            args = open('/proc/%s/cmdline' % pid, 'rb').read().split(b'\0')
+        except OSError:
+            continue
+        if comm in ('rustc', 'cargo', 'vitest', 'node'):
+            heavy += 1
+        if comm == 'claude' and any(a in (b'--session-id', b'--resume') for a in args):
+            chats += 1
+    return dict(avail_mb=mem, load1=load1, cores=os.cpu_count() or 1, disk_gb=disk, temp_c=temp, heavy=heavy,
+                chats=max(chats, len(sessions())))
+
+
+def admission(c):
+    if not c.get('chat', True):
+        return c.get('why_not', 'this device does not take chats')
+    s = snapshot()
+    L = c['limits']
+    if not os.path.isdir(c['config_dir']):
+        return 'Claude Code is not logged in here'
+    if s['chats'] >= L['max_chats']:
+        return '%d chat(s) already run here (limit %d)' % (s['chats'], L['max_chats'])
+    if s['avail_mb'] < L['avail_mb']:
+        return 'only %d MB of memory available (needs %d)' % (s['avail_mb'], L['avail_mb'])
+    if s['disk_gb'] < L['disk_gb']:
+        return 'only %.1f GB of disk free (needs %d)' % (s['disk_gb'], L['disk_gb'])
+    if s['load1'] > s['cores']:
+        return 'load %.1f is above its %d cores' % (s['load1'], s['cores'])
+    if s['temp_c'] >= 85:
+        return 'it is hot (%d C)' % s['temp_c']
+    if s['heavy'] >= 3:
+        return 'a build or test run is using it now'
+    return None
+
+
+def under_root(c, cwd):
+    if not PATH_RE.fullmatch(cwd) or '..' in cwd.split('/'):
+        raise Bad('CWD must be an absolute path of a-z, 0-9, _ . / -')
+    for root in c['seat_roots']:
+        root = os.path.realpath(root)
+        if cwd == root or cwd.startswith(root + '/'):
+            return
+    raise Refused('that folder is not under this device\'s seat roots')
+
+
+def launch(verb, args):
+    if len(args) < 3:
+        raise Bad('%s needs NAME CWD SID [MODE] [MODEL] [TOOLS]' % verb)
+    name = need_name(args)
+    cwd, sid = args[1], args[2]
+    if not SID_RE.fullmatch(sid):
+        raise Bad('SID must be a UUID')
+    mode = model = tools = None
+    for v in args[3:]:
+        if v in MODES and mode is None:
+            mode = v
+        elif v in MODELS and model is None:
+            model = v
+        elif v in TOOLSETS and tools is None:
+            tools = v
+        else:
+            raise Bad('unknown option value %r' % v[:40])
+    c = conf()
+    under_root(c, cwd)
+    if c.get('tools_force'):  # a device may only narrow the tools asked for (Kirpi: read-only tools, no Bash/Edit/Write)
+        tools = c['tools_force']
+    if c.get('modes') and mode not in c['modes']:  # a device may allow only some modes (Kirpi: plan, which cannot write)
+        raise Refused('this device takes chats only in %s mode' % ' or '.join(c['modes']))
+    os.makedirs(os.path.dirname(LOCK), exist_ok=True)
+    lock = open(LOCK, 'w')
+    deadline = time.time() + 30
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if time.time() > deadline:
+                raise Refused('another start is in progress here')
+            time.sleep(0.5)
+    why = admission(c)
+    if why:
+        raise Refused(why)
+    if name in sessions():
+        raise Refused('that chat already runs here')
+    real = os.path.realpath(cwd)
+    under_root(c, real)  # a symlink inside a root must not lead out of it
+    os.makedirs(real, mode=0o700, exist_ok=True)
+    seat = os.path.join(HOME, '.config/kimera/seat')
+    # Same-user boundary: a chat can edit these files. So every start (1) puts the seat settings back from the pristine
+    # copy the installer kept, so tampering lasts only inside the chat that did it, and (2) refuses to start if the
+    # user-scope settings hold anything beyond the allowed keys (permissions, hooks, env would be a way around us).
+    pristine = os.path.join(seat, 'settings.pristine.json')
+    if not os.path.exists(pristine):
+        raise Refused('the seat settings have no pristine copy; run install-device.sh for this device')
+    want = open(pristine).read()
+    cur = os.path.join(seat, 'settings.json')
+    if not os.path.exists(cur) or open(cur).read() != want:
+        if os.path.exists(cur):
+            audit('settings', name, 'restored: the seat settings had drifted from the pristine copy')
+        open(cur + '.new', 'w').write(want)
+        os.replace(cur + '.new', cur)
+    try:
+        user = json.load(open(os.path.join(c['config_dir'], 'settings.json')))
+    except FileNotFoundError:
+        user = {}
+    except (OSError, ValueError):  # unreadable or invalid: not "empty", fail closed
+        raise Refused('the user settings file cannot be read as JSON')
+    if not isinstance(user, dict):
+        raise Refused('the user settings file is not a JSON object')
+    extra = sorted(set(user) - set(c.get('user_settings_allow', ['theme'])))
+    if extra:
+        raise Refused('the user settings hold %s; remove them or list them in user_settings_allow' % ', '.join(extra))
+    cmd = [c['claude'], '--session-id' if verb == 'start' else '--resume', sid]
+    if mode:
+        cmd += ['--permission-mode', mode]
+    if model:
+        cmd += ['--model', model]
+    # user scope only: a chat can write <folder>/.claude/settings*.json (project, local scopes), and those must not count
+    cmd += ['--setting-sources', 'user', '--settings', os.path.join(seat, 'settings.json')]
+    if tools:
+        cmd += ['--tools', tools]
+    # no MCP server of any scope (user config, the folder's .mcp.json a chat can write) loads on a device, tools or not
+    cmd += ['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']  # inline: no chat-writable file decides this
+    if c.get('box_mb'):  # the chat sits in its own memory box: if it grows, it is the chat that dies, not a neighbour
+        cmd = ['systemd-run', '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=%dM' % c['box_mb'],
+               '-p', 'MemorySwapMax=0', '--'] + cmd
+    r = tmux('new-session', '-d', '-x', '200', '-y', '50', '-s', name, '-c', real,
+             '-e', 'CLAUDE_CONFIG_DIR=' + c['config_dir'], '-e', 'AIDEN_HOOK_URL=http://127.0.0.1:%d/hook' % c['hook_port'],
+             '-e', 'KIMERA_HOOK_TOKEN_FILE=' + c['hook_token_file'], *cmd, text=True)
+    if r.returncode != 0:
+        raise Refused('tmux would not start it: ' + (r.stderr.strip().splitlines() or ['no reason given'])[-1][:160])
+    return name
+
+
+def facts(name):
+    r = tmux('display-message', '-p', '-t', tgt(name), '#{pane_pid} #{pane_dead}', text=True)
+    if r.returncode != 0:
+        return None
+    pid, dead = r.stdout.split()
+    if dead == '1' or not pid.isdigit():
+        return None
+    st = open('/proc/%s/stat' % pid).read()
+    rest = st[st.rindex(')') + 2:].split()
+    pgrp, tpgid, start_ticks = int(rest[2]), int(rest[5]), int(rest[19])
+    btime = next(int(l.split()[1]) for l in open('/proc/stat') if l.startswith('btime'))
+    hz = os.sysconf('SC_CLK_TCK')
+    c = conf()
+    sess = None
+    p = os.path.join(c['config_dir'], 'sessions', pid + '.json')
+    try:
+        sess = json.load(open(p))
+    except (OSError, ValueError):
+        pass
+    try:
+        mid = open('/etc/machine-id').read().strip()
+    except OSError:
+        mid = None
+    return dict(name=name, pane_pid=int(pid), started_at=btime + start_ticks / hz,
+                comm=open('/proc/%s/comm' % pid).read().strip(), foreground=(pgrp == tpgid),
+                machine_id=mid, pid_ns=os.readlink('/proc/self/ns/pid'), session=sess)
+
+
+def sample():
+    ppid, rss = {}, {}
+    for pid in filter(str.isdigit, os.listdir('/proc')):
+        try:
+            st = open('/proc/%s/stat' % pid).read()
+            f = st[st.rindex(')') + 2:].split()
+            ppid[int(pid)] = int(f[1])
+            rss[int(pid)] = int(f[21]) * os.sysconf('SC_PAGE_SIZE') / 2 ** 20
+        except (OSError, ValueError, IndexError):
+            continue
+    kids = {}
+    for p, pp in ppid.items():
+        kids.setdefault(pp, []).append(p)
+
+    def tree(p):
+        total, todo = 0.0, [p]
+        while todo:
+            q = todo.pop()
+            total += rss.get(q, 0)
+            todo += kids.get(q, [])
+        return total
+    chats = {}
+    for name in sessions():
+        r = tmux('display-message', '-p', '-t', tgt(name), '#{pane_pid}', text=True)
+        pid = r.stdout.strip()
+        if pid.isdigit():
+            chats[name] = round(tree(int(pid)))
+    snap = snapshot()
+    swap = 0
+    for line in open('/proc/meminfo'):
+        k, _, v = line.partition(':')
+        if k == 'SwapTotal':
+            swap += int(v.split()[0])
+        elif k == 'SwapFree':
+            swap -= int(v.split()[0])
+    return dict(t=int(time.time()), avail_mb=snap['avail_mb'], load1=snap['load1'], swap_used_mb=max(swap, 0) // 1024,
+                temp_c=snap['temp_c'], chats=chats)
+
+
+def run(verb, args, data):
+    if verb == 'sample':
+        print(json.dumps(sample()))
+        return 0
+    if verb == 'admit':
+        why = admission(conf())
+        if why:
+            raise Refused(why)
+        print('ok')
+        return 0
+    if verb in ('start', 'resume'):
+        launch(verb, args)
+        print('ok')
+        return 0
+    name = need_name(args)
+    if verb == 'has':
+        yes = tmux('has-session', '-t', '=' + name).returncode == 0
+        print('yes' if yes else 'no')
+        return 0 if yes else 1
+    if name not in sessions():
+        raise Refused('no such chat here')
+    if verb == 'capture':
+        flags = ['-p'] + (['-e'] if args[1:] == ['ansi'] else [])
+        out = tmux('capture-pane', '-t', tgt(name), *flags).stdout
+        if len(out) > MAX_CAPTURE:
+            out = out[:MAX_CAPTURE] + b'\n[kimera: truncated]\n'
+        sys.stdout.buffer.write(out)
+        return 0
+    if verb == 'type':
+        if len(data) > MAX_TYPE:
+            raise Refused('text is over 64 KiB')
+        buf = 'kimera-%d' % os.getpid()
+        if tmux('load-buffer', '-b', buf, '-', input=data).returncode != 0:
+            raise Refused('tmux would not take the text')
+        ok = tmux('paste-buffer', '-d', '-p', '-b', buf, '-t', tgt(name)).returncode == 0
+        print('ok' if ok else 'failed')
+        return 0 if ok else 1
+    if verb == 'key':
+        if len(args) != 2 or args[1] not in KEYS:
+            raise Bad('KEY must be one of ' + ' '.join(KEYS))
+        ok = tmux('send-keys', '-t', tgt(name), args[1]).returncode == 0
+        print('ok' if ok else 'failed')
+        return 0 if ok else 1
+    if verb == 'kill':
+        pid = tmux('display-message', '-p', '-t', tgt(name), '#{pane_pid}', text=True).stdout.strip()
+        ok = tmux('kill-session', '-t', '=' + name).returncode == 0
+        for _ in range(50):  # answer only once the process is gone, so the next admission sees a free seat
+            if not (ok and pid.isdigit() and os.path.exists('/proc/' + pid)):
+                break
+            time.sleep(0.1)
+        print('ok' if ok else 'failed')
+        return 0 if ok else 1
+    if verb == 'facts':
+        f = facts(name)
+        if f is None:
+            print('no pane')
+            return 1
+        print(json.dumps(f))
+        return 0
+    raise Bad('unknown verb')
+
+
+def main():
+    parts = os.environ.get('SSH_ORIGINAL_COMMAND', ' '.join(sys.argv[1:])).split()
+    if not parts:
+        print('no verb')
+        return 4
+    verb, args = parts[0], parts[1:]
+    data = sys.stdin.buffer.read(MAX_TYPE + 1) if verb == 'type' else b''
+    try:
+        rc = run(verb, args, data)
+        audit(verb, args[0] if args else None,
+              ('ok' if rc == 0 else 'no' if verb == 'has' else 'failed') + (' len=%d' % len(data) if verb == 'type' else ''))
+        return rc
+    except Refused as e:
+        audit(verb, args[0] if args else None, 'refused: %s' % e)
+        print(e)
+        return 2
+    except Bad as e:
+        audit(verb, args[0] if args else None, 'bad: %s' % e)
+        print(e)
+        return 4
+
+
+if __name__ == '__main__':
+    sys.exit(main())

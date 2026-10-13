@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""kimera-perf DEVICE: the timer calls this every minute. It asks the device for one reading (`kimera-run DEVICE sample`)
+and keeps it in two places under ~/.local/state/kimera/:
+  now-<device>.json   the LATEST reading, always (mode 600, replaced whole each minute). A reader such as the Uruk map
+                      reads this file and never calls the device. {"device", "t" (Tilki's clock, epoch seconds),
+                      "state": "up" | "away" | "unknown", and when up: "avail_mb", "load1", "swap_used_mb", "temp_c",
+                      "chats": {name: resident MB}}. "away" = the device did not answer; "unknown" = it answered
+                      something this program does not accept (refused, or a malformed line).
+  perf-<device>.tsv   one line per minute, but only while a chat runs: time, available MB, load1, swap used MB,
+                      temperature, number of chats, each chat's resident MB (name=MB, comma separated). So this file
+                      is the record of runs. Capped at 20000 lines (oldest dropped).
+Every field from the device is validated before it reaches either file. AIDEN adds tokens and seconds per reply."""
+import json, os, subprocess, sys, time
+dev = sys.argv[1]
+run = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'kimera-run')
+import re
+NAME = re.compile(r'^aiden-[a-z0-9-]{8,36}$')
+if not re.fullmatch(r'[a-z][a-z0-9-]{0,30}', dev):
+    sys.exit('device name must be a-z, 0-9, -')
+STATE = os.path.expanduser('~/.local/state/kimera')
+
+
+def now(state, **fields):
+    """Replace now-<device>.json whole: a reader never sees half a file, and nobody but this user may read it."""
+    os.makedirs(STATE, exist_ok=True)
+    path = os.path.join(STATE, 'now-%s.json' % dev)
+    fd = os.open(path + '.new', os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(dict(device=dev, t=int(time.time()), state=state, **fields), f)
+        f.write('\n')
+    os.replace(path + '.new', path)
+
+
+try:
+    r = subprocess.run([run, dev, 'sample'], capture_output=True, text=True, timeout=45)
+except subprocess.TimeoutExpired:
+    r = None
+except Exception:  # the door itself cannot be run: an old "up" must not stay in the file
+    now('unknown')
+    sys.exit(1)
+if r is None or r.returncode == 3:
+    now('away')
+    sys.exit(0)  # no line in the record, no noise
+if r.returncode != 0:
+    now('unknown')
+    sys.exit(0)
+
+
+def num(v, lo, hi):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not lo <= v <= hi:
+        raise ValueError
+    return v
+
+
+try:  # the device is not trusted: every field is checked before it reaches the record
+    if len(r.stdout) > 4096:
+        raise ValueError
+    d = json.loads(r.stdout.strip().splitlines()[-1])
+    if not isinstance(d, dict) or not isinstance(d.get('chats'), dict) or len(d['chats']) > 8:
+        raise ValueError
+    s = dict(t=time.time(),  # our clock, not the device's
+             avail_mb=int(num(d['avail_mb'], 0, 1 << 20)), load1=float(num(d['load1'], 0, 10000)),
+             swap_used_mb=int(num(d['swap_used_mb'], 0, 1 << 20)), temp_c=int(num(d['temp_c'], 0, 200)),
+             chats={k: int(num(v, 0, 1 << 20)) for k, v in d['chats'].items() if NAME.fullmatch(k)})
+    if len(s['chats']) != len(d['chats']):
+        raise ValueError
+except Exception:  # any surprise in the answer, not only the ones foreseen: fail closed, never leave an old "up"
+    now('unknown')
+    sys.exit(0)  # a malformed answer reaches neither file
+now('up', avail_mb=s['avail_mb'], load1=round(s['load1'], 2), swap_used_mb=s['swap_used_mb'], temp_c=s['temp_c'],
+    chats=s['chats'])
+if not s['chats']:
+    sys.exit(0)
+path = os.path.join(STATE, 'perf-%s.tsv' % dev)
+new = not os.path.exists(path)
+with open(path, 'a') as f:
+    if new:
+        f.write('time\tavail_mb\tload1\tswap_used_mb\ttemp_c\tchats\tchat_rss_mb\n')
+    f.write('%s\t%d\t%.2f\t%d\t%d\t%d\t%s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z', time.localtime(s['t'])), s['avail_mb'],
+            s['load1'], s['swap_used_mb'], s['temp_c'], len(s['chats']), ','.join('%s=%d' % kv for kv in sorted(s['chats'].items()))))
+lines = open(path).read().splitlines()
+if len(lines) > 20001:
+    open(path + '.new', 'w').write('\n'.join([lines[0]] + lines[-20000:]) + '\n')
+    os.replace(path + '.new', path)

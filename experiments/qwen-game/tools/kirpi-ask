@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""kirpi-ask: send one instruction to the model on Kirpi and save what it writes to a file.
+It prints one short line, never the model's text, so the asking side spends no tokens reading it.
+
+  kirpi-ask PROMPT_FILE OUT_FILE [--max N] [--code] [--system TEXT] [--think]
+    --code    keep only the first fenced code block of the answer
+    --max N   most tokens the model may write (default 1500; the model's whole window is 4096)
+"""
+import sys, json, time, re, os, urllib.request
+a = sys.argv[1:]
+if len(a) < 2: sys.exit(__doc__)
+prompt, out = open(a[0], encoding='utf-8').read(), a[1]
+mx = int(a[a.index('--max') + 1]) if '--max' in a else 1500
+msgs = ([{'role': 'system', 'content': a[a.index('--system') + 1]}] if '--system' in a else []) + [{'role': 'user', 'content': prompt}]
+body = {'messages': msgs, 'max_tokens': mx, 'temperature': 0.6,
+        'chat_template_kwargs': {'enable_thinking': '--think' in a}}
+t = time.time()
+req = urllib.request.Request('http://127.0.0.1:8081/v1/chat/completions', json.dumps(body).encode(), {'Content-Type': 'application/json'})
+try: r = json.load(urllib.request.urlopen(req, timeout=1500))
+except Exception as e: sys.exit(f'failed: {e} (is the tunnel up? run tools/kirpi-tunnel)')
+text = r['choices'][0]['message'].get('content') or ''
+if '--code' in a:
+    m = re.search(r'```[a-zA-Z]*\n(.*?)```', text, re.S) or re.search(r'```[a-zA-Z]*\n(.*)', text, re.S)
+    if m: text = m.group(1)
+open(out, 'w', encoding='utf-8').write(text)
+u, sec = r.get('usage', {}), time.time() - t
+log = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'qwen-log.jsonl')
+open(log, 'a').write(json.dumps({'prompt_file': a[0], 'out': out, 'in': u.get('prompt_tokens'), 'out_tokens': u.get('completion_tokens'), 'seconds': round(sec)}) + '\n')
+print(f"ok: {u.get('prompt_tokens')} in, {u.get('completion_tokens')} out, {sec:.0f} s, stopped by {r['choices'][0].get('finish_reason')} -> {out} ({len(text)} chars, {text.count(chr(10)) + 1} lines)")

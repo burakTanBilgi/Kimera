@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""tokens: what this experiment cost. Claude's side is read from a Claude Code transcript,
+the model's side from qwen-log.jsonl.   tokens [TRANSCRIPT.jsonl]   (default: this session's)"""
+import sys, json, os, glob
+here = os.path.dirname(os.path.abspath(__file__))
+if len(sys.argv) > 1: path = sys.argv[1]
+else:
+    sid = os.environ.get('CLAUDE_CODE_SESSION_ID', '')
+    hits = glob.glob(os.path.expanduser(f'~/.claude*/projects/*/{sid}.jsonl')) if sid else []
+    if not hits: sys.exit('no transcript found; pass its path')
+    path = hits[0]
+seen = {}
+for line in open(path, encoding='utf-8'):
+    try: d = json.loads(line)
+    except ValueError: continue
+    m = d.get('message') or {}
+    if d.get('type') == 'assistant' and m.get('usage'): seen[m.get('id')] = m['usage']   # one count per reply
+k = lambda f: sum(u.get(f) or 0 for u in seen.values())
+print(f"Claude: {len(seen)} replies | written (output) {k('output_tokens')} | read fresh {k('input_tokens')} | "
+      f"cache written {k('cache_creation_input_tokens')} | cache read {k('cache_read_input_tokens')}")
+q = [json.loads(l) for l in open(os.path.join(here, '..', 'qwen-log.jsonl'))] if os.path.exists(os.path.join(here, '..', 'qwen-log.jsonl')) else []
+print(f"Qwen on Kirpi: {len(q)} calls | read {sum(x['in'] or 0 for x in q)} | written {sum(x['out_tokens'] or 0 for x in q)} | {sum(x['seconds'] for x in q)} s")

@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""kimera-mirror DEVICE: copy the device's Claude transcripts to Tilki, read-only, for AIDEN's own reading.
+Destination: the row's mirror_dir (~/.local/share/kimera/mirror/<device>/<config dir name>/projects).
+
+The device is treated as untrusted, so nothing it sends touches the mirror directly:
+  1. rsync pulls only *.jsonl files (no links, devices, owners or modes; 64 MB per file; 1 MB/s; 60 s) into a
+     fresh staging folder, skipping what the mirror already holds (--compare-dest);
+  2. staging is measured (allocated bytes, entries, links); over a bound, the whole staging folder is deleted
+     and the mirror stays exactly as it was;
+  3. otherwise the files are moved into the mirror, after checking the mirror's total would stay under 1 GiB
+     and 50000 entries. Staging is always removed.
+Never deletes from the mirror (a transcript the device lost stays). Exit 0 ok, 1 transfer failed, 2 refused."""
+import json, os, shutil, stat, subprocess, sys
+
+CAP, MAX_ENTRIES, MAX_STAGE_ENTRIES = 1 << 30, 50000, 5000
+conf = os.environ.get('KIMERA_DEVICES', os.path.expanduser('~/.config/kimera/devices.json'))
+row = json.load(open(conf))[sys.argv[1]]
+run = row.get('run') or {}
+ssh = row['ssh']
+dest = os.path.expanduser(row['mirror_dir']).rstrip('/')
+stage = dest + '.incoming'
+os.makedirs(dest, mode=0o700, exist_ok=True)
+
+
+def measure(root):
+    """(allocated bytes, entries); raises ValueError on a link or an unreadable entry."""
+    size = n = 0
+    try:
+        for d, dirs, fs in os.walk(root):
+            for name in dirs + fs:
+                st = os.lstat(os.path.join(d, name))
+                if stat.S_ISLNK(st.st_mode):
+                    raise ValueError('a symlink sits in %s' % d)
+                size += st.st_blocks * 512
+                n += 1
+    except OSError as e:
+        raise ValueError('cannot measure (%s)' % e.__class__.__name__)
+    return size, n
+
+
+def refuse(why, code=2):
+    shutil.rmtree(stage, ignore_errors=True)
+    print('mirror refused: ' + why)
+    try:  # a refusal must be visible: the unit shows failed, and this line says why
+        import time
+        p = os.path.expanduser('~/.local/state/kimera/mirror-refused.log')
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        open(p, 'a').write('%s %s %s\n' % (time.strftime('%Y-%m-%dT%H:%M:%S%z'), sys.argv[1], why))
+    except OSError:
+        pass
+    sys.exit(code)
+
+
+shutil.rmtree(stage, ignore_errors=True)
+try:
+    have, have_n = measure(dest)
+except ValueError as e:
+    refuse(str(e))
+if have + (64 << 20) > CAP or have_n >= MAX_ENTRIES:
+    refuse('the mirror is full (%d MB, %d entries)' % (have >> 20, have_n))
+os.makedirs(stage, mode=0o700)
+
+opts = ' '.join(ssh[:-1])
+if run.get('authorized'):
+    opts += ' -i %s -o IdentitiesOnly=yes' % os.path.expanduser(run['key'].replace('kimera-seat', 'kimera-mirror'))
+    src = '%s:/' % ssh[-1]
+else:
+    src = '%s:%s/projects/' % (ssh[-1], row['config_dir'])
+cmd = ['rsync', '-rt', '--no-links', '--no-perms', '--no-owner', '--no-group', '--chmod=D700,F600', '--max-size=64m',
+       '--include=*/', '--include=*.jsonl', '--exclude=*', '--prune-empty-dirs', '--timeout=30', '--bwlimit=1000',
+       '--compare-dest=' + dest, '-e', opts, src, stage + '/']
+try:
+    rc = subprocess.call(cmd, timeout=60)
+except subprocess.TimeoutExpired:
+    rc = 1
+if rc != 0:
+    refuse('transfer failed (rsync %d)' % rc, 1)
+try:
+    add, add_n = measure(stage)
+except ValueError as e:
+    refuse(str(e))
+if add_n > MAX_STAGE_ENTRIES or have + add > CAP or have_n + add_n > MAX_ENTRIES:
+    refuse('the device offered %d entries, %d MB' % (add_n, add >> 20))
+for d, _, fs in os.walk(stage):
+    rel = os.path.relpath(d, stage)
+    os.makedirs(os.path.join(dest, rel), mode=0o700, exist_ok=True)
+    for n in fs:
+        os.replace(os.path.join(d, n), os.path.join(dest, rel, n))
+shutil.rmtree(stage, ignore_errors=True)

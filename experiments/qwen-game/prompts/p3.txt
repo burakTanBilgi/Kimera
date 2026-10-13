@@ -1,0 +1,8 @@
+Write the file game.js for a riddle game in plain JavaScript. The page has ids: moth, speech, score, guess, send, hint, next.
+Data: const WORDS = ["moon","candle","river","shadow","mirror","key","egg","clock","echo","snow"]. Keep a variable answer (current word, chosen at random, not the same twice in a row) and solved (a number).
+Write these functions:
+1. async function ask(userText): POST to http://127.0.0.1:8081/v1/chat/completions with JSON {model:"qwen3.5-4b", messages:[{role:"system",content:"You are the Riddle Moth, a small mysterious glowing moth. Speak in 1 to 3 short sentences."},{role:"user",content:userText}], max_tokens:100, temperature:0.8, chat_template_kwargs:{enable_thinking:false}}. Return choices[0].message.content. If fetch fails, return "The moth is silent... (is Kirpi awake?)".
+2. async function newRiddle(): pick answer, show "The moth is thinking..." in #speech, then ask("Write a short riddle whose answer is '"+answer+"'. Never write the word itself. Only the riddle.") and show it in #speech.
+3. async function giveHint(): ask("Give a one-sentence hint about '"+answer+"' without saying the word.") and show it.
+4. function checkGuess(): compare #guess value, trimmed and lowercase, with answer. If right: solved++, update #score as "Solved: N", add class happy to #moth for 1.5 s, show "Yes! It was "+answer+"." in #speech, clear the input. If wrong: add class sad for 1 s and show "Not quite. Try again." Pressing Enter in #guess also checks.
+Connect buttons: send -> checkGuess, hint -> giveHint, next -> newRiddle. Call newRiddle() when the page loads. Answer with one code block only.

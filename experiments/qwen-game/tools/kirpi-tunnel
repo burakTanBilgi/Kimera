@@ -1,0 +1,7 @@
+#!/bin/sh
+# kirpi-tunnel: makes Kirpi's model reachable on Tilki at 127.0.0.1:8081, through SSH.
+# Both ends are 127.0.0.1; nothing is opened on the network. Run again if it drops.
+if curl -s -o /dev/null --max-time 3 http://127.0.0.1:8081/health; then echo "tunnel already up"; exit 0; fi
+ssh -f -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L 127.0.0.1:8081:127.0.0.1:8080 \
+  "${KIRPI_SSH_HOST:?set KIRPI_SSH_HOST to USER@HOST of the machine that runs the model}" \
+  && sleep 1 && curl -s -o /dev/null -w "tunnel up, model health %{http_code}\n" --max-time 5 http://127.0.0.1:8081/health

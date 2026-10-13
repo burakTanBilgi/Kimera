@@ -1,0 +1,5 @@
+{"prompt_file": "prompts/p1.txt", "out": "game/index.html", "in": 159, "out_tokens": 219, "seconds": 40}
+{"prompt_file": "prompts/p2.txt", "out": "game/style.css", "in": 145, "out_tokens": 911, "seconds": 160}
+{"prompt_file": "prompts/p3.txt", "out": "game/game.js", "in": 458, "out_tokens": 716, "seconds": 135}
+{"prompt_file": "prompts/p4.txt", "out": "out/game.js", "in": 830, "out_tokens": 725, "seconds": 144}
+{"prompt_file": "prompts/p5.txt", "out": "out/style.css", "in": 457, "out_tokens": 789, "seconds": 146}
