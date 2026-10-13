@@ -3,6 +3,12 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.5.0 (2026-10-13)
+
+- `seed`, the eleventh verb: a read copy of a git worktree (tracked files at HEAD only) is put in the seat folder on the device. The work streams from git and is spooled to disk on the device. Only plain files and folders are taken; a path that leaves the folder, more than 20,000 files or 200 MB, the seat root itself, or a folder a chat runs in is refused. The new folder is built beside the old one and swapped in.
+- A device without Node can use an unpacked one, first on the PATH of seat chats only.
+- A chat no longer updates the agent program under itself; an update that landed during a chat had broken its search tools.
+
 ## 0.4.0 (2026-10-13)
 
 - The public part: this repository, built from an allowlist by a script that refuses to produce anything unless the tests pass inside the tree and a scan finds no address, user, host or mail address.

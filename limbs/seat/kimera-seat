@@ -8,13 +8,14 @@ checked against a fixed shape first, and tmux/claude are started with argument l
   start  NAME CWD SID [MODE] [MODEL] [TOOLS]
   resume NAME CWD SID [MODE] [MODEL] [TOOLS]
   has NAME | capture NAME [ansi] | type NAME (text on stdin) | key NAME KEY | kill NAME | facts NAME
+  seed CWD COMMIT (a tar of the work on stdin): a read copy of the work in the seat folder, replacing what was there
   sample          one JSON line: memory, load, swap, temperature, and each running chat's resident memory
 
 Answers on stdout, one line (or the pane / one JSON object). Exit codes:
   0 ok / yes   1 no / failed   2 refused (one sentence)   4 bad arguments   (3 device away is kimera-run's)
 Config: ~/.config/kimera/seat/seat.json. Audit: ~/kimera/run.log (one line per verb, ok / no / failed / refused; `type` logs the length only).
 """
-import hashlib, fcntl, json, os, re, subprocess, sys, time
+import hashlib, fcntl, json, os, re, shutil, subprocess, sys, tarfile, time
 
 HOME = os.path.expanduser('~')
 TMUX_SHA256 = '2967b531cb415b19afbc153bc19eff1c2e461726781a36c27c855a166bb36d4b'  # Debian trixie tmux 3.5a-3 amd64 (usr/bin/tmux)
@@ -24,6 +25,8 @@ LOCK = os.path.join(HOME, 'kimera/run.lock')
 SOCK = 'aiden'
 MAX_TYPE = 64 * 1024
 MAX_CAPTURE = 256 * 1024
+MAX_SEED, MAX_SEED_FILES = 200 << 20, 20000
+COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
 NAME_RE = re.compile(r'^aiden-[a-z0-9-]{8,36}$')
 SID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 PATH_RE = re.compile(r'^/[A-Za-z0-9_./-]+$')
@@ -156,6 +159,113 @@ def under_root(c, cwd):
     raise Refused('that folder is not under this device\'s seat roots')
 
 
+def take_lock():
+    """One start or seed at a time on a device. The caller keeps the returned file open until it is done."""
+    os.makedirs(os.path.dirname(LOCK), exist_ok=True)
+    lock = open(LOCK, 'w')
+    deadline = time.time() + 30
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return lock
+        except OSError:
+            if time.time() > deadline:
+                raise Refused('another start or seed is in progress here')
+            time.sleep(0.5)
+
+
+def seed(args):
+    """seed CWD COMMIT, a tar of the work on stdin: put a read copy of it in the seat folder, replacing what was there.
+    Only plain files and folders are taken. The folder is built beside the old one and swapped in, so a refusal
+    leaves the old one whole."""
+    if len(args) != 2:
+        raise Bad('seed needs CWD COMMIT')
+    cwd, commit = args
+    if not COMMIT_RE.fullmatch(commit):
+        raise Bad('COMMIT must be 40 hex digits')
+    c = conf()
+    under_root(c, cwd)
+    real = os.path.realpath(cwd)
+    under_root(c, real)
+    if any(real == os.path.realpath(r) for r in c['seat_roots']):
+        raise Refused('a seat root itself cannot be seeded; name a folder under it')
+    lock = take_lock()
+    # the tar goes to disk, not to memory: a device with a model loaded has little memory to spare
+    spool = os.path.join(HOME, 'kimera', 'seed.%d.tar' % os.getpid())
+    try:
+        return unpack(c, real, commit, spool)
+    finally:
+        try:
+            os.remove(spool)
+        except OSError:
+            pass
+        lock.close()
+
+
+def unpack(c, real, commit, spool):
+    got = 0
+    fd = os.open(spool, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'wb') as f:
+        while True:
+            chunk = sys.stdin.buffer.read(1 << 20)
+            if not chunk:
+                break
+            got += len(chunk)
+            if got > MAX_SEED + (16 << 20):  # the tar's own headers on top of 200 MB of files
+                raise Refused('the work is over 200 MB')
+            f.write(chunk)
+    r = tmux('list-sessions', '-F', '#{session_name}\t#{session_path}', text=True)
+    for line in (r.stdout.splitlines() if r.returncode == 0 else []):
+        n, _, path = line.partition('\t')
+        at = os.path.realpath(path) if path else ''
+        if n.startswith('aiden-') and (at == real or at.startswith(real + '/')):
+            raise Refused('a chat runs in that folder; stop it before seeding')
+    try:
+        tar = tarfile.open(spool, mode='r:')
+        members = tar.getmembers()
+    except (tarfile.TarError, EOFError, OSError):
+        raise Refused('the work did not arrive as a tar')
+    take, total, skipped = [], 0, 0
+    for m in members:
+        parts = m.name.split('/')
+        if m.name.startswith('/') or '..' in parts or '' in parts[:-1] or len(m.name) > 1024 or '\0' in m.name:
+            raise Refused('the work holds a path that leaves its folder')
+        if m.isdir():
+            continue
+        if not m.isreg():  # links, devices, pipes: never unpacked
+            skipped += 1
+            continue
+        total += m.size
+        take.append(m)
+        if len(take) > MAX_SEED_FILES:
+            raise Refused('the work holds more than 20000 files')
+        if total > MAX_SEED:
+            raise Refused('the work is over 200 MB')
+    os.makedirs(os.path.dirname(real), mode=0o700, exist_ok=True)
+    new, old = real + '.seed-new', real + '.seed-old'
+    for leftover in (new, old):
+        shutil.rmtree(leftover, ignore_errors=True)
+    os.makedirs(new, mode=0o700)
+    try:
+        for m in take:
+            dest = os.path.join(new, m.name)
+            os.makedirs(os.path.dirname(dest), mode=0o700, exist_ok=True)
+            src = tar.extractfile(m)
+            fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o700 if m.mode & 0o100 else 0o600)
+            with os.fdopen(fd, 'wb') as f:
+                shutil.copyfileobj(src, f)
+        if os.path.lexists(real):
+            os.rename(real, old)
+        os.rename(new, real)
+    except OSError as e:
+        shutil.rmtree(new, ignore_errors=True)
+        if not os.path.lexists(real) and os.path.lexists(old):
+            os.rename(old, real)
+        raise Refused('the device could not write the work (%s)' % e.__class__.__name__)
+    shutil.rmtree(old, ignore_errors=True)
+    return len(take), total, skipped, commit
+
+
 def launch(verb, args):
     if len(args) < 3:
         raise Bad('%s needs NAME CWD SID [MODE] [MODEL] [TOOLS]' % verb)
@@ -179,17 +289,7 @@ def launch(verb, args):
         tools = c['tools_force']
     if c.get('modes') and mode not in c['modes']:  # a device may allow only some modes (Kirpi: plan, which cannot write)
         raise Refused('this device takes chats only in %s mode' % ' or '.join(c['modes']))
-    os.makedirs(os.path.dirname(LOCK), exist_ok=True)
-    lock = open(LOCK, 'w')
-    deadline = time.time() + 30
-    while True:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except OSError:
-            if time.time() > deadline:
-                raise Refused('another start is in progress here')
-            time.sleep(0.5)
+    lock = take_lock()
     why = admission(c)
     if why:
         raise Refused(why)
@@ -234,12 +334,17 @@ def launch(verb, args):
         cmd += ['--tools', tools]
     # no MCP server of any scope (user config, the folder's .mcp.json a chat can write) loads on a device, tools or not
     cmd += ['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']  # inline: no chat-writable file decides this
+    if c.get('node'):  # a device without the package: the unpacked Node at a fixed place, first on the chat's PATH only.
+        # Set on the command itself: a variable given to tmux does not survive the memory box's systemd-run.
+        cmd = ['env', 'PATH=%s:%s' % (os.path.join(HOME, 'kimera/node/bin'), os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'))] + cmd
     if c.get('box_mb'):  # the chat sits in its own memory box: if it grows, it is the chat that dies, not a neighbour
         cmd = ['systemd-run', '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=%dM' % c['box_mb'],
                '-p', 'MemorySwapMax=0', '--'] + cmd
     r = tmux('new-session', '-d', '-x', '200', '-y', '50', '-s', name, '-c', real,
              '-e', 'CLAUDE_CONFIG_DIR=' + c['config_dir'], '-e', 'AIDEN_HOOK_URL=http://127.0.0.1:%d/hook' % c['hook_port'],
-             '-e', 'KIMERA_HOOK_TOKEN_FILE=' + c['hook_token_file'], *cmd, text=True)
+             '-e', 'KIMERA_HOOK_TOKEN_FILE=' + c['hook_token_file'],
+             '-e', 'DISABLE_AUTOUPDATER=1',  # a chat must not replace the program under itself (it broke a running chat's search)
+             *cmd, text=True)
     if r.returncode != 0:
         raise Refused('tmux would not start it: ' + (r.stderr.strip().splitlines() or ['no reason given'])[-1][:160])
     return name
@@ -325,6 +430,11 @@ def run(verb, args, data):
     if verb in ('start', 'resume'):
         launch(verb, args)
         print('ok')
+        return 0
+    if verb == 'seed':
+        files, size, skipped, commit = seed(args)
+        audit('seeded', args[0], 'files=%d bytes=%d links_left_out=%d commit=%s' % (files, size, skipped, commit))
+        print('ok %d %d %s' % (files, size, commit))
         return 0
     name = need_name(args)
     if verb == 'has':

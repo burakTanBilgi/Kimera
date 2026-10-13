@@ -9,9 +9,9 @@ the workers (agent chats), and Kimera owns the machines and the road to them.
 
 This repository is the public part of a private one. It holds the door, the job switch, their tests and
 the measurements. Addresses, host configuration, the desk screens of the machines and the guards stay
-private. Version 0.4.0, 13 October 2026.
+private. Version 0.5.0, 13 October 2026.
 
-The history here starts at 0.4.0. The private repository began on 8 October 2026 and held about 60 commits and
+The history here starts at 0.4.0, one commit per release from then on. The private repository began on 8 October 2026 and held about 60 commits and
 13 release tags by this version, all tagged on 13 October; the work itself started in late September.
 
 ## The machines
@@ -53,12 +53,13 @@ flowchart LR
 5. Every verb writes one line to the device's own log: time, verb, chat name, outcome. Typed text is
    logged by its length only.
 
-The ten verbs:
+The eleven verbs:
 
 | Verb | What it does |
 |---|---|
 | `admit` | Would a chat be taken now? `ok` or the reason. |
 | `start`, `resume` | Start a chat in a folder under the device's seat roots, or resume one by its id. |
+| `seed` | Put a read copy of a git worktree (tracked files at one commit) into the seat folder. |
 | `has` | Is that chat's session alive? |
 | `capture` | The chat's screen as text, cut at 256 KiB. |
 | `type` | Text from stdin (64 KiB at most) pasted into the chat. |
@@ -131,7 +132,7 @@ on Kirpi held 260 to 280 MB of resident memory inside its 500 MB box, while the 
 ## Tests
 
 ```sh
-python3 limbs/seat/test-seat.py        # 28 checks: the seat, with a temporary home and a fake tmux
+python3 limbs/seat/test-seat.py        # 45 checks: the seat, with a temporary home and a fake tmux
 python3 limbs/tilki/run/test-perf.py   # 15 checks: readings from a device that lies, is away, or is refused
 python3 limbs/kirpi/jobs/test-sim.py   # 18 checks: the job switch against a simulated machine
 ```

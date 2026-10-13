@@ -4,6 +4,7 @@
     "ssh": ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "USER@HOST"],
     "chat": true,
     "seat_roots": ["/home/USER/seats"],
+    "seed_roots": ["~/work/worktrees"],
     "config_dir": "/home/USER/.claude",
     "claude": "/home/USER/.local/bin/claude",
     "hook_port": 8732,
@@ -16,6 +17,7 @@
     "chat": true,
     "why_not": "Kirpi takes one read-only chat (plan mode, a 500 MB box) when 650 MB is free; the local model keeps the rest.",
     "seat_roots": ["/home/USER/seats"],
+    "seed_roots": ["~/work/worktrees"],
     "config_dir": "/home/USER/.claude",
     "claude": "/home/USER/.local/bin/claude",
     "hook_port": 8732,
@@ -25,6 +27,7 @@
     "modes": ["plan"],
     "box_mb": 500,
     "tmux": true,
+    "node": true,
     "tools_force": "Read,Grep,Glob"
   }
 }
