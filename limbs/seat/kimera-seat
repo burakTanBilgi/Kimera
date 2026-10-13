@@ -16,7 +16,7 @@ Answers on stdout, one line (or the pane / one JSON object). Exit codes:
   0 ok / yes   1 no / failed   2 refused (one sentence)   4 bad arguments   (3 device away is kimera-run's)
 Config: ~/.config/kimera/seat/seat.json. Audit: ~/kimera/run.log (one line per verb, ok / no / failed / refused; `type` logs the length only).
 """
-import hashlib, fcntl, json, os, re, shutil, stat, subprocess, sys, tarfile, time
+import hashlib, fcntl, json, os, re, resource, shutil, stat, subprocess, sys, tarfile, time
 
 HOME = os.path.expanduser('~')
 TMUX_SHA256 = '2967b531cb415b19afbc153bc19eff1c2e461726781a36c27c855a166bb36d4b'  # Debian trixie tmux 3.5a-3 amd64 (usr/bin/tmux)
@@ -289,7 +289,7 @@ def base_of(real):
     return os.path.join(HOME, 'kimera', 'seeds', hashlib.sha256(real.encode()).hexdigest()[:24] + '.git')
 
 
-def git(real, *a, cap=None, attrs_from_seed=False):
+def git(real, *a, cap=None, attrs_from_seed=False, fsize=None):
     """git on the seat folder with its record kept OUTSIDE the folder, and nothing of the user's or the system's
     configuration: no hooks, no outside diff program, no text conversion. With `attrs_from_seed` the attributes are
     read from what was seeded, not from the folder, so a chat's own .gitattributes cannot pass a binary file off as
@@ -299,7 +299,10 @@ def git(real, *a, cap=None, attrs_from_seed=False):
         '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null',
         '-c', 'user.name=kimera', '-c', 'user.email=kimera@localhost', '-c', 'core.quotePath=false'] + list(a)
     if cap is None:
-        return subprocess.run(cmd, capture_output=True, env=env, cwd=real)
+        # `fsize`: no file git writes may be larger than this, so taking a chat's files in cannot fill the disk even
+        # if one grows after it was measured
+        limit = (lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))) if fsize else None
+        return subprocess.run(cmd, capture_output=True, env=env, cwd=real, preexec_fn=limit)
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd=real)
     out = p.stdout.read(cap + 1)
     if len(out) > cap:
@@ -343,22 +346,25 @@ def fetch(args):
         fresh = git(real, 'ls-files', '--others', '--exclude-standard', '-z', cap=1 << 20)
         if changed is None or fresh is None:
             raise Refused('too many changes to come back as one diff')
-        names = [n for n in (changed + fresh).decode('utf-8', 'replace').split('\0') if n]
+        names = [n for n in (changed + fresh).split(b'\0') if n]  # bytes: a name need not be valid UTF-8
         if len(names) > 2000:
             raise Refused('too many changes to come back as one diff (%d files)' % len(names))
         total = 0
         for n in names:
+            shown = plain(n.decode('utf-8', 'replace'))
             try:
-                st = os.lstat(os.path.join(real, n))
-            except OSError:
+                st = os.lstat(os.path.join(os.fsencode(real), n))
+            except FileNotFoundError:
                 continue  # deleted: it comes back as a deletion
+            except OSError:
+                raise Refused('cannot look at a changed file: %s' % shown)
             if not stat.S_ISREG(st.st_mode):
-                raise Refused('not a plain file, so it cannot come back: %s' % plain(n))
+                raise Refused('not a plain file, so it cannot come back: %s' % shown)
             total += st.st_size
             if st.st_size > MAX_FETCH or total > 4 * MAX_FETCH:
-                raise Refused('too large to come back as a diff: %s' % plain(n))
-        if git(real, 'add', '-A').returncode != 0:
-            raise Refused('the device could not read the folder')
+                raise Refused('too large to come back as a diff: %s' % shown)
+        if git(real, 'add', '-A', fsize=4 * MAX_FETCH).returncode != 0:
+            raise Refused('the device could not take the changes in (a file grew, or cannot be read)')
         raw = git(real, 'diff', '--cached', '--raw', '--no-renames', '-z', 'HEAD', cap=4 << 20)
         num = git(real, 'diff', '--cached', '--numstat', '--no-renames', '-z', 'HEAD', cap=4 << 20, attrs_from_seed=True)
         if raw is None or num is None:
@@ -380,11 +386,11 @@ def fetch(args):
     if not out:
         return None
     try:  # our own look, whatever git was told to think: a diff is text or it does not travel
-        if b'\0' in out:
-            raise ValueError
-        out.decode('utf-8')
+        text = out.decode('utf-8')
+        if any((ord(ch) < 32 and ch not in '\n\t\r') or 127 <= ord(ch) < 160 for ch in text):
+            raise ValueError  # NUL, ESC and the other control characters: they could drive the reader's terminal
     except ValueError:
-        raise Refused('the changes are not plain text')
+        raise Refused('the changes hold control characters or are not plain text')
     return out
 
 

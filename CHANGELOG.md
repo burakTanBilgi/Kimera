@@ -3,6 +3,14 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.6.2 (2026-10-13)
+
+Found by review of 0.6.1, all in `fetch`.
+
+- A diff holding ESC or another control character is refused; it could drive the terminal of whoever reads it.
+- A file name that is not UTF-8 no longer slips past the size limit: names are handled as bytes.
+- A file that grows after it was measured cannot fill the disk: git takes the changes in under a file-size limit.
+
 ## 0.6.1 (2026-10-13)
 
 Found by review of 0.6.0, all in `fetch`.
