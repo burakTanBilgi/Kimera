@@ -69,7 +69,7 @@
     "node": true,
     "rsync": true,
     "tools_force": "Read,Grep,Glob",
-    "card": "You are running on Kirpi, one of the owner's own machines: a small laptop with 4 cores, 3.7 GB of memory and no graphics card, started here by AIDEN through Kimera's door. It also keeps a local language model that other work depends on, so memory is the scarce thing here.",
+    "card": "You are running on Kirpi, one of the owner's own machines: a small laptop with 4 cores (8 threads), 3.7 GB of memory and no graphics card, started here by AIDEN through Kimera's door. It also keeps a local language model that other work depends on, so memory is the scarce thing here.",
     "working": {
       "box_mb": 1800,
       "avail_mb": 2300,

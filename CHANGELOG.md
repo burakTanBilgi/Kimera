@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.9.1 (2026-10-13)
+
+- The working class is checked on the real machine end to end: the start parked the large model and kept search ready, a wake during the chat was answered queued, the chat named its machine and limit, edited a file and ran a command, its diff came back, and after the chat ended the model loaded by itself in 5 s.
+
 ## 0.9.0 (2026-10-13)
 
 - A working class on the 4 GB machine: a start in a mode that can write takes a lease from the job switch, which parks the large model (the small search model stays up) and gives the chat an 1800 MB box. The model's work waits and is owed a turn: a `wake` during the chat is answered `queued`, and the model loads by itself when the chat ends. Nothing is killed while nobody waits; with someone waiting, the chat is stopped at 120 minutes and can be resumed.
