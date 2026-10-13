@@ -28,7 +28,7 @@ MAX_TYPE = 64 * 1024
 MAX_CAPTURE = 256 * 1024
 MAX_SEED, MAX_SEED_FILES = 200 << 20, 20000
 MAX_FETCH = 2 << 20
-HIDDEN = set('\u200b\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2060\u2066\u2067\u2068\u2069\ufeff\u061c')
+import unicodedata
 COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
 NAME_RE = re.compile(r'^aiden-[a-z0-9-]{8,36}$')
 SID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
@@ -51,6 +51,18 @@ def plain(text, most=120):
     """A name or a sentence that may come from a chat (a file name, say): one printable line, so it can forge neither
     a line of the log nor a line of an answer."""
     return ''.join(ch if ch.isprintable() else '?' for ch in str(text))[:most]
+
+
+def hidden(ch):
+    """True for a character a reader does not see or that changes how the text around it reads. Decided by Unicode
+    category, not by a list: control (but newline, tab, carriage return), format (direction marks, zero-width
+    characters, tags, the byte-order mark), surrogate, private use, unassigned, line and paragraph separators; and the
+    variation selectors that carry no picture (they can hide bytes)."""
+    if ch in '\n\t\r':
+        return False
+    o = ord(ch)
+    return (unicodedata.category(ch) in ('Cc', 'Cf', 'Cs', 'Co', 'Cn', 'Zl', 'Zp')
+            or 0xFE00 <= o <= 0xFE0E or 0xE0100 <= o <= 0xE01EF)
 
 
 def audit(verb, name, outcome):
@@ -231,11 +243,19 @@ def unpack(c, real, commit, spool):
         at = os.path.realpath(path) if path else ''
         if n.startswith('aiden-') and at and (at == real or at.startswith(real + '/') or real.startswith(at + '/')):
             raise Refused('a chat runs in that folder; stop it before seeding')
+    # The tar is read one entry at a time and counted as it is read, under a memory limit for this process: a tar
+    # can claim a header of any size, and a device with a model loaded has no memory to give to a lie.
+    resource.setrlimit(resource.RLIMIT_AS, (768 << 20, 768 << 20))
     try:
         tar = tarfile.open(spool, mode='r:')
-        members = tar.getmembers()
-    except (tarfile.TarError, EOFError, OSError):
-        raise Refused('the work did not arrive as a tar')
+        members, seen = [], 0
+        for m in tar:
+            seen += 1
+            if seen > 3 * MAX_SEED_FILES:
+                raise Refused('the work holds more than 20000 files')
+            members.append(m)
+    except (tarfile.TarError, EOFError, OSError, MemoryError):
+        raise Refused('the work did not arrive as a tar this device can read')
     take, total, skipped = [], 0, 0
     for m in members:
         parts = m.name.split('/')
@@ -404,8 +424,7 @@ def fetch(args):
         # NUL, ESC and the other control characters could drive the reader's terminal; a lone carriage return hides
         # what came before it on the line; the direction marks and line separators of Unicode make text read
         # differently from what it is. None of them travels.
-        if (any((ord(ch) < 32 and ch not in '\n\t\r') or 127 <= ord(ch) < 160 or ch in HIDDEN for ch in text)
-                or re.search(r'\r(?!\n)', text)):
+        if any(hidden(ch) for ch in text) or re.search(r'\r(?!\n)', text):
             raise ValueError
     except ValueError:
         raise Refused('the changes hold control characters or are not plain text')

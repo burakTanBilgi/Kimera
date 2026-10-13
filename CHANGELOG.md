@@ -3,6 +3,13 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.6.4 (2026-10-13)
+
+Found by review of 0.6.3.
+
+- `fetch` decides hidden text by Unicode category, not by a list: any control, format, private-use or unassigned character, a line separator, or a picture-less variation selector in the diff is refused. Ordinary non-English text and plain emoji pass.
+- `seed` reads the tar one entry at a time, counted as it reads, under a memory limit for that process.
+
 ## 0.6.3 (2026-10-13)
 
 Found by review of 0.6.2, all in `fetch`.

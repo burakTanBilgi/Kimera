@@ -114,6 +114,13 @@ for label, entries in (('a path that climbs out', [('../evil', b'x', 'file')]), 
     rc, out = call(f'seed {work} {C}', tar_of(entries))
     check('seed refuses %s and keeps the old folder' % label, rc == 2 and os.listdir(work) == ['only.txt'])
 check('seed refuses the escape itself', not os.path.exists(root + '/evil') and not os.path.exists('/tmp/evil'))
+_big = _io.BytesIO()
+with _tar.open(fileobj=_big, mode='w') as _t:
+    for _i in range(7):
+        _d = _tar.TarInfo('d%d' % _i); _d.type = _tar.DIRTYPE; _t.addfile(_d)
+S.MAX_SEED_FILES = 2
+check('seed counts entries as it reads them', call(f'seed {work} {C}', _big.getvalue())[0] == 2 and os.listdir(work) == ['only.txt'])
+S.MAX_SEED_FILES = 20000
 check('seed refuses what is not a tar', call(f'seed {work} {C}', b'not a tar at all')[0] == 2 and os.listdir(work) == ['only.txt'])
 check('seed refuses a folder outside the roots', call(f'seed /etc/x {C}', tar_of([('a', b'x', 'file')]))[0] == 2)
 check('seed refuses the seat root itself', call(f'seed {root} {C}', tar_of([('a', b'x', 'file')]))[0] == 2 and os.path.isdir(work))
@@ -179,12 +186,15 @@ open(back + '/esc.txt', 'w').write('hello \x1b[2J\x1b]0;owned\x07 there\n')
 rc, out = call(f'fetch {back}')
 check('changes with terminal control characters do not travel', rc == 2 and '\x1b' not in out)
 os.remove(back + '/esc.txt')
-for label, body in (('a direction override', 'if admin\u202e // ok\n'), ('a lone carriage return', 'safe\rrm -rf\n'), ('a zero-width space', 'a\u200bb\n')):
+for label, body in (('a direction override', 'if admin\u202e // ok\n'), ('a lone carriage return', 'safe\rrm -rf\n'), ('a zero-width space', 'a\u200bb\n'), ('an invisible tag character', 'a\U000E0041b\n'),
+                    ('a soft hyphen', 'pass\u00adword\n'), ('a hidden variation selector', 'a\U000E0101b\n'), ('a private-use character', 'a\ue000b\n')):
     open(back + '/h.txt', 'w', newline='').write(body)
     check('changes with %s do not travel' % label, call(f'fetch {back}')[0] == 2)
 os.remove(back + '/h.txt')
 open(back + '/crlf.txt', 'w', newline='').write('one\r\ntwo\r\n')
 check('a file with Windows line ends still travels', call(f'fetch {back}')[0] == 0)
+open(back + '/crlf.txt', 'w', newline='').write('T\u00fcrk\u00e7e \u2764\ufe0f \u4e2d\u6587 caf\u00e9\r\n')
+check('ordinary non-English text and emoji still travel', call(f'fetch {back}')[0] == 0)
 os.remove(back + '/crlf.txt')
 open(os.path.join(S.base_of(os.path.realpath(back)), 'index.lock'), 'w').close()
 open(back + '/after.txt', 'w').write('fine\n')
