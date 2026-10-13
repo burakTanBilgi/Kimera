@@ -243,6 +243,7 @@ priv = os.path.join(tmp, 'kimera/tmux/root/usr/bin'); os.makedirs(priv)
 import shutil; shutil.copy(shim, priv + '/tmux')
 import hashlib
 S.TMUX_SHA256 = hashlib.sha256(open(priv + '/tmux', 'rb').read()).hexdigest()
+os.makedirs(tmp + '/kimera/node/bin', exist_ok=True); os.makedirs(tmp + '/.cargo/bin', exist_ok=True)
 cfg.update(modes=['plan'], box_mb=500, tmux=True, tools_force='Read,Grep,Glob', node=True)
 json.dump(cfg, open(seatdir + '/seat.json', 'w'))
 open(rec, 'w').close()
@@ -252,7 +253,7 @@ check('no mode refused when a list is set', call(f'start aiden-boxed0001 {root}/
 rc, out = call(f'start aiden-boxed0001 {root}/e {sid2} plan sonnet Read,Grep,Glob,Bash')
 log2 = open(rec).read()
 check('device narrows the tools', '--tools Read,Grep,Glob ' in log2 and 'Bash' not in log2.split('new-session')[-1])
-check('the private Node is first on the chat\'s PATH', '-- env PATH=%s/kimera/node/bin:' % tmp in log2 and 'PATH=' not in log)
+check('the private Node and the Rust tools are first on the chat\'s PATH', '-- env PATH=%s/kimera/node/bin:%s/.cargo/bin:' % (tmp, tmp) in log2 and 'PATH=' not in log)
 check('plan mode starts, boxed', rc == 0 and 'systemd-run --user --scope --quiet --collect -p MemoryMax=500M -p MemorySwapMax=0 -- env PATH=' in log2 and ' /bin/claude --session-id' in log2)
 S.TMUX_SHA256 = '0' * 64  # a swapped binary is refused, never executed
 check('a private tmux that is not the expected package is refused', call('has aiden-abcdef12')[0] == 2)

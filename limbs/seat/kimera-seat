@@ -516,9 +516,13 @@ def launch(verb, args):
         cmd += ['--tools', tools]
     # no MCP server of any scope (user config, the folder's .mcp.json a chat can write) loads on a device, tools or not
     cmd += ['--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}']  # inline: no chat-writable file decides this
-    if c.get('node'):  # a device without the package: the unpacked Node at a fixed place, first on the chat's PATH only.
-        # Set on the command itself: a variable given to tmux does not survive the memory box's systemd-run.
-        cmd = ['env', 'PATH=%s:%s' % (os.path.join(HOME, 'kimera/node/bin'), os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'))] + cmd
+    # What a builder needs is first on the chat's PATH only: the unpacked Node of a device without the package, and the
+    # user's own Rust tools if they are there (a login shell would have them; a chat started over ssh does not).
+    # Set on the command itself: a variable given to tmux does not survive the memory box's systemd-run.
+    first = ([os.path.join(HOME, 'kimera/node/bin')] if c.get('node') else []) + [os.path.join(HOME, '.cargo/bin')]
+    first = [d for d in first if os.path.isdir(d)]
+    if first:
+        cmd = ['env', 'PATH=%s:%s' % (':'.join(first), os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin'))] + cmd
     if c.get('box_mb'):  # the chat sits in its own memory box: if it grows, it is the chat that dies, not a neighbour
         cmd = ['systemd-run', '--user', '--scope', '--quiet', '--collect', '-p', 'MemoryMax=%dM' % c['box_mb'],
                '-p', 'MemorySwapMax=0', '--'] + cmd
