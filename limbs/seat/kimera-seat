@@ -16,7 +16,7 @@ Answers on stdout, one line (or the pane / one JSON object). Exit codes:
   0 ok / yes   1 no / failed   2 refused (one sentence)   4 bad arguments   (3 device away is kimera-run's)
 Config: ~/.config/kimera/seat/seat.json. Audit: ~/kimera/run.log (one line per verb, ok / no / failed / refused; `type` logs the length only).
 """
-import hashlib, fcntl, json, os, re, resource, shutil, stat, subprocess, sys, tarfile, time
+import hashlib, fcntl, json, os, re, resource, shutil, signal, stat, subprocess, sys, tarfile, time
 
 HOME = os.path.expanduser('~')
 TMUX_SHA256 = '2967b531cb415b19afbc153bc19eff1c2e461726781a36c27c855a166bb36d4b'  # Debian trixie tmux 3.5a-3 amd64 (usr/bin/tmux)
@@ -28,6 +28,7 @@ MAX_TYPE = 64 * 1024
 MAX_CAPTURE = 256 * 1024
 MAX_SEED, MAX_SEED_FILES = 200 << 20, 20000
 MAX_FETCH = 2 << 20
+HIDDEN = set('\u200b\u200e\u200f\u2028\u2029\u202a\u202b\u202c\u202d\u202e\u2060\u2066\u2067\u2068\u2069\ufeff\u061c')
 COMMIT_RE = re.compile(r'^[0-9a-f]{40}$')
 NAME_RE = re.compile(r'^aiden-[a-z0-9-]{8,36}$')
 SID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
@@ -301,7 +302,10 @@ def git(real, *a, cap=None, attrs_from_seed=False, fsize=None):
     if cap is None:
         # `fsize`: no file git writes may be larger than this, so taking a chat's files in cannot fill the disk even
         # if one grows after it was measured
-        limit = (lambda: resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))) if fsize else None
+        def limit():  # over the limit git gets an error and leaves cleanly; the default signal would kill it mid-write
+            signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+            resource.setrlimit(resource.RLIMIT_FSIZE, (fsize, fsize))
+        limit = limit if fsize else None
         return subprocess.run(cmd, capture_output=True, env=env, cwd=real, preexec_fn=limit)
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env, cwd=real)
     out = p.stdout.read(cap + 1)
@@ -341,6 +345,16 @@ def fetch(args):
         raise Refused('that folder was not seeded here, or this device has no git')
     lock = take_lock()
     try:
+        # Start from what was seeded, every time: a fetch that was refused or cut short must not leave a lock or a
+        # half-taken change that makes every later fetch fail, and what an earlier fetch took in is dropped
+        for stale in ('index.lock', 'HEAD.lock'):
+            try:
+                os.remove(os.path.join(base_of(real), stale))
+            except OSError:
+                pass
+        if git(real, 'read-tree', 'HEAD').returncode != 0:
+            raise Refused('the record of the seed cannot be read; seed the folder again')
+        git(real, 'prune', '--expire=now')
         # First, what would come back, found without taking anything in: a chat can leave a file of any size here
         changed = git(real, 'diff', '--name-only', '--no-renames', '-z', 'HEAD', cap=1 << 20, attrs_from_seed=True)
         fresh = git(real, 'ls-files', '--others', '--exclude-standard', '-z', cap=1 << 20)
@@ -387,8 +401,12 @@ def fetch(args):
         return None
     try:  # our own look, whatever git was told to think: a diff is text or it does not travel
         text = out.decode('utf-8')
-        if any((ord(ch) < 32 and ch not in '\n\t\r') or 127 <= ord(ch) < 160 for ch in text):
-            raise ValueError  # NUL, ESC and the other control characters: they could drive the reader's terminal
+        # NUL, ESC and the other control characters could drive the reader's terminal; a lone carriage return hides
+        # what came before it on the line; the direction marks and line separators of Unicode make text read
+        # differently from what it is. None of them travels.
+        if (any((ord(ch) < 32 and ch not in '\n\t\r') or 127 <= ord(ch) < 160 or ch in HIDDEN for ch in text)
+                or re.search(r'\r(?!\n)', text)):
+            raise ValueError
     except ValueError:
         raise Refused('the changes hold control characters or are not plain text')
     return out

@@ -3,6 +3,13 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.6.3 (2026-10-13)
+
+Found by review of 0.6.2, all in `fetch`.
+
+- A fetch that was refused or cut short no longer blocks the next one: every fetch starts from what was seeded, and a leftover lock is removed.
+- A diff holding a Unicode direction mark, a line separator, a zero-width space, a byte-order mark or a lone carriage return is refused, because such text reads differently from what it is.
+
 ## 0.6.2 (2026-10-13)
 
 Found by review of 0.6.1, all in `fetch`.
