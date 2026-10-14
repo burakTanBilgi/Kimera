@@ -41,6 +41,47 @@ MAX_TYPE = 64 * 1024
 MAX_ASK = 128 * 1024
 
 
+def typable(data):
+    """Plain text only: valid UTF-8 with no control character but new line and tab. An escape sequence in typed text
+    could end the paste early and press keys the `key` verb does not allow (Shift-Tab changes a chat's mode)."""
+    try:
+        text = data.decode('utf-8')
+    except UnicodeDecodeError:
+        return False
+    return not any((ord(ch) < 32 and ch not in '\n\t') or 127 <= ord(ch) < 160 for ch in text)
+
+
+def bounded(cmd, stdin, data, limit, cap=4 << 20):
+    """Run cmd and take at most `cap` bytes of what it says, within `limit` seconds: a device that hangs or pours
+    out data must not fill this machine's memory. stdin: a pipe to hand on, or None to send `data`."""
+    p = subprocess.Popen(cmd, stdin=stdin if stdin is not None else subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    hung = []
+    late = threading.Timer(limit, lambda: (hung.append(1), p.kill()))
+    late.start()
+    try:
+        if stdin is None:
+            def send():
+                try:
+                    p.stdin.write(data)
+                    p.stdin.close()
+                except OSError:
+                    pass
+            threading.Thread(target=send, daemon=True).start()
+        out = p.stdout.read(cap + 1)
+        if len(out) > cap:
+            p.kill()
+            p.wait()
+            return subprocess.CompletedProcess(cmd, 1, b'the device sent more than it may\n', b'')
+        p.wait()
+    finally:
+        late.cancel()
+        if p.poll() is None:
+            p.kill()
+    if hung:
+        raise subprocess.TimeoutExpired(cmd, limit)
+    return subprocess.CompletedProcess(cmd, p.returncode, out, b'')
+
+
 def bad(why):
     print(why)
     sys.exit(4)
@@ -55,8 +96,11 @@ def check(verb, args):
         if not NAME_RE.fullmatch(args[0]): bad('NAME must be aiden- plus 8 to 36 of a-z, 0-9, -')
         if not PATH_RE.fullmatch(args[1]) or '..' in args[1].split('/'): bad('CWD must be an absolute path of a-z, 0-9, _ . / -')
         if not SID_RE.fullmatch(args[2]): bad('SID must be a UUID')
+        rank = []
         for v in args[3:]:
             if v not in MODES + MODELS + TOOLSETS: bad('unknown option value')
+            rank.append(0 if v in MODES else 1 if v in MODELS else 2)
+        if rank != sorted(set(rank)): bad('options go in the order MODE MODEL TOOLS, each at most once')
         return
     if verb == 'ask':
         if len(args) != 2 or not re.fullmatch(r'[a-z][a-z0-9-]{0,23}', args[0]) or args[1] not in MODELS: bad('ask needs NAME (a-z, 0-9, -; up to 24) and MODEL')
@@ -224,7 +268,16 @@ def main():
     if verb in ('start', 'resume', 'admit', 'seed', 'fetch', 'pull') and not row.get('chat'):
         print(row.get('why_not', 'this device does not take chats'))
         return 2
+    if verb in ('start', 'resume', 'seed', 'fetch', 'pull'):
+        # the device confines the folder too; refused here first, so a wrong path never travels
+        roots = [r.rstrip('/') for r in row.get('seat_roots', []) if isinstance(r, str) and r.startswith('/')]
+        if not any(args[1 if verb in ('start', 'resume') else 0].startswith(r + '/') for r in roots):
+            print('that folder is not under a seat root of this device')
+            return 2
     run = row.get('run') or {}
+    if not isinstance(row.get('ssh'), list) or not row['ssh']:
+        print('the row of this device has no ssh command')
+        return 4
     data = b''
     if verb == 'type':
         data = sys.stdin.buffer.read(MAX_TYPE + 1)
@@ -233,6 +286,10 @@ def main():
             return 2
         if not data:
             bad('type needs text on stdin')
+        data = data.replace(b'\r\n', b'\n')
+        if not typable(data):
+            print('the text holds a control character or is not UTF-8; only plain text, new lines and tabs are typed')
+            return 2
     if verb == 'ask':
         if not row.get('ask'):
             print('this device does not take asks')
@@ -264,7 +321,13 @@ def main():
         # .memory/ is where a chat is told its owner's memory lies. Work that carries its own folder of that name would
         # be read as memory, so it is refused: only a pack this program lays may be there.
         # (any spelling of the name: a folder .Memory is one a reader would take for it too)
-        own = subprocess.run(git + ['ls-tree', '--name-only', '-z', commit], capture_output=True, timeout=30)
+        try:
+            own = subprocess.run(git + ['ls-tree', '--name-only', '-z', commit], capture_output=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            own = None
+        if own is None:
+            print('git did not answer about the work in time')
+            return 1
         if own.returncode != 0 or any(x.decode('utf-8', 'replace').lower() in ('.memory', '.memory-proposals') for x in own.stdout.split(b'\0')):
             print('the work itself holds a .memory folder; that name is kept for the memory pack')
             return 2
@@ -288,7 +351,7 @@ def main():
     try:
         if feed:  # the work streams from git to the device; it is never held whole in this machine's memory
             if pack is None:
-                r = subprocess.run(cmd, stdin=feed.stdout, capture_output=True, timeout=180)
+                r = bounded(cmd, feed.stdout, b'', 180, 1 << 20)
             else:  # the work, then the pack, down one pipe
                 p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
@@ -303,10 +366,12 @@ def main():
                 t.start()
                 late = threading.Timer(180, p.kill)  # the read below would wait for ever on a device that hangs
                 late.start()
-                out = p.stdout.read(1 << 20)
-                p.wait()
-                hung = not late.is_alive()
-                late.cancel()
+                try:
+                    out = p.stdout.read(1 << 20)
+                    p.wait()
+                    hung = not late.is_alive()
+                finally:
+                    late.cancel()
                 if hung:
                     raise subprocess.TimeoutExpired(cmd, 180)
                 r = subprocess.CompletedProcess(cmd, p.returncode, out, b'')
@@ -315,7 +380,7 @@ def main():
                 print('git could not pack the work')
                 return 1
         else:
-            r = subprocess.run(cmd, input=data, capture_output=True, timeout=60 if verb in ('start', 'resume', 'fetch') else 360 if verb == 'ask' else 30)
+            r = bounded(cmd, None, data, 60 if verb in ('start', 'resume', 'fetch') else 360 if verb == 'ask' else 30)
     except subprocess.TimeoutExpired:
         r = None
         if feed:

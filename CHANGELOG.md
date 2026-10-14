@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.13 (2026-10-14)
+
+- From reviews by agents running on a device: typed text must be plain UTF-8 (no escape sequences; refused on both sides), `kimera-run` confines the folder to the row's seat roots before anything travels, options go in order, and every answer from a device is bounded in size.
+
 ## 0.12.12 (2026-10-14)
 
 - The example rows show a small device taking three reading chats at once.

@@ -9,7 +9,7 @@ the workers (agent chats), and Kimera owns the machines and the road to them.
 
 This repository is the public part of a private one. It holds the door, the job switch, their tests and
 the measurements. Addresses, host configuration, the desk screens of the machines and the guards stay
-private. Version 0.12.12, 14 October 2026.
+private. Version 0.12.13, 14 October 2026.
 
 The history here starts at 0.4.0, one commit per release from then on. The private repository began on 8 October 2026 and held about 60 commits and
 13 release tags by this version, all tagged on 13 October; the work itself started in late September.
@@ -82,7 +82,7 @@ Around the door:
 
 - [kimera-mirror](limbs/tilki/run/kimera-mirror) copies a device's transcripts to the laptop. The device
   is not trusted: files land in a staging folder, are measured (no links, 64 MB a file, 5,000 entries a
-  pull, 1 GiB in all), and only then moved in.
+  pull; 1 GiB and 50,000 entries in all), and only then moved in.
 - [kimera-perf](limbs/tilki/run/kimera-perf) asks each device for one reading a minute, validates every
   field, keeps the latest in a file other programs may read, and records a line for each minute a chat runs.
 - [install-device.sh](limbs/tilki/run/install-device.sh) places everything on a device without root.

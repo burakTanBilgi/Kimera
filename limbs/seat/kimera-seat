@@ -1093,6 +1093,15 @@ def run(verb, args, data):
     if verb == 'type':
         if len(data) > MAX_TYPE:
             raise Refused('text is over 64 KiB')
+        # Plain text only. An escape sequence in pasted text could end the paste early and press keys that `key` does
+        # not allow (Shift-Tab changes a chat's mode), so no control character but new line and tab is typed.
+        data = data.replace(b'\r\n', b'\n')
+        try:
+            text = data.decode('utf-8')
+        except UnicodeDecodeError:
+            text = None
+        if text is None or any((ord(ch) < 32 and ch not in '\n\t') or 127 <= ord(ch) < 160 for ch in text):
+            raise Refused('the text holds a control character or is not UTF-8; only plain text, new lines and tabs are typed')
         buf = 'kimera-%d' % os.getpid()
         if tmux('load-buffer', '-b', buf, '-', input=data).returncode != 0:
             raise Refused('tmux would not take the text')
