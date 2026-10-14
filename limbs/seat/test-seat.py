@@ -399,7 +399,7 @@ check('with a memory road only absolute folders stay on the chat\'s PATH', rcw =
 os.environ['PATH'] = os.environ['PATH'][:-len(':rel/bin:')]
 open(tmp + '/kimera/bin/kimera-memory', 'a').write('id\n'); S.sessions = lambda: []; open(rec, 'w').close()
 rcw, _ = call(f'start aiden-memw00002 {root}/mw2 {sid3}')
-check('and is told nothing of it when the installed program was changed', rcw == 0 and 'kimera-memory' not in open(rec).read())
+check('and is told nothing of it when the installed program was changed, while BASH_ENV and ENV are still taken out', rcw == 0 and 'kimera-memory' not in open(rec).read() and ' env -u BASH_ENV -u ENV ' in open(rec).read())
 open(tmp + '/kimera/bin/kimera-memory', 'w').write('#!/bin/sh\n')
 check('the first line of the memory program shuts out modules beside it and of the user', open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'kimera-memory')).readline() == '#!/usr/bin/python3 -I\n')
 json.dump(dict(memcfg, memory_sha256=None), open(seatdir + '/seat.json', 'w'))

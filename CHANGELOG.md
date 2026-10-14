@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.17 (2026-10-14)
+
+- Found by review of 0.12.16: `BASH_ENV` and `ENV` are unset for every chat on a device with a memory road, also when the memory command itself is not offered.
+
 ## 0.12.16 (2026-10-14)
 
 - Found by review: on a device with a memory road, `BASH_ENV` and `ENV` are unset on the chat's own command line rather than checked in the seat's environment, which is not the chat's.

@@ -741,6 +741,7 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     # The bare name reaches the installed program or nothing. On a device with a memory road, any other folder that
     # holds something of that name is taken off the chat's PATH, the system's own included, and a chat is told of
     # the command only when the name does reach the installed one.
+    road = bool(c.get('memory_port'))  # kept: `c` loses the key below when the chat is not to be told of the command
     dirs = base.split(':') + extra if c.get('memory_port') else [d for d in base.split(':') if d] + extra
     if c.get('memory_port'):
         # only absolute folders: a relative one (or an empty entry, which means the chat's own folder) is the chat's to fill
@@ -780,7 +781,7 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
         c = dict(c, memory_port=None)
     if extra or dirs != base.split(':'):
         cmd = ['env', 'PATH=%s' % ':'.join(dirs)] + cmd
-    if c.get('memory_port'):
+    if road:
         # BASH_ENV and ENV name a file the shell reads first, from anywhere. They are taken out on the chat's own
         # command line: the chat starts under tmux, whose server has its own environment, so looking at this
         # program's environment would say nothing about the chat's.
