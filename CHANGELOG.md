@@ -3,6 +3,14 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.13.2 (2026-10-14)
+
+- No change to the public part.
+
+## 0.13.1 (2026-10-14)
+
+- No change to the public part.
+
 ## 0.13.0 (2026-10-14)
 
 - The looks and machine fixes of the two small machines are published as repositories of their own (the Caretta rice and the Kirpi rice).
