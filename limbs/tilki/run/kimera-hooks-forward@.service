@@ -3,7 +3,7 @@ Description=Kimera hooks road to %i (device loopback to Tilki's hooks listener)
 After=network-online.target
 
 [Service]
-ExecStart=%h/Desktop/Projects/Kimera/limbs/tilki/run/kimera-hooks-forward %i
+ExecStart=%h/.config/kimera/repo/limbs/tilki/run/kimera-hooks-forward %i
 Restart=always
 RestartSec=10
 MemoryMax=64M

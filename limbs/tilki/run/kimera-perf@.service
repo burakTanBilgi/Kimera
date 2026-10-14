@@ -3,6 +3,6 @@ Description=Kimera performance line for %i (written only while a chat runs there
 
 [Service]
 Type=oneshot
-ExecStart=%h/Desktop/Projects/Kimera/limbs/tilki/run/kimera-perf %i
+ExecStart=%h/.config/kimera/repo/limbs/tilki/run/kimera-perf %i
 Nice=10
 MemoryMax=64M

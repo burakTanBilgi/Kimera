@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.15 (2026-10-14)
+
+- The laptop's user units find the code through a link, `~/.config/kimera/repo`, instead of a fixed folder under the home folder.
+
 ## 0.12.14 (2026-10-14)
 
 - From a review by an agent on a device: a chat cannot be started in a seat root itself, and `facts` passes on only bounded, simple values from a file the chat's user can write.

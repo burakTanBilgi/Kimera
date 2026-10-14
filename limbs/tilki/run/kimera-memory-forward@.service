@@ -3,7 +3,7 @@ Description=Kimera memory road to %i (device loopback to the memory's device doo
 After=network-online.target
 
 [Service]
-ExecStart=%h/Desktop/Projects/Kimera/limbs/tilki/run/kimera-memory-forward %i
+ExecStart=%h/.config/kimera/repo/limbs/tilki/run/kimera-memory-forward %i
 Restart=always
 RestartSec=10
 MemoryMax=64M
