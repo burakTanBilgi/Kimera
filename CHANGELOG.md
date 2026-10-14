@@ -3,6 +3,10 @@
 Versions follow SemVer. Before 1.0 the minor number counts a shipped road or limb and a patch is a fix.
 This is the public history; it leaves out changes to the private parts.
 
+## 0.12.12 (2026-10-14)
+
+- The example rows show a small device taking three reading chats at once.
+
 ## 0.12.11 (2026-10-14)
 
 - Found by review of 0.12.10: on a device with a memory road, a shell start file that names the memory command refuses a chat's start instead of only leaving the command out of the machine card.

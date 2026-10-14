@@ -43,7 +43,7 @@
       "USER@HOST"
     ],
     "chat": true,
-    "why_not": "Kirpi takes one chat: a reading one (plan mode, 500 MB) beside its local model, or a working one (1800 MB) with the large model parked and its work waiting.",
+    "why_not": "Kirpi takes up to three chats: reading ones (plan mode, 500 MB each) beside its local models, or one working chat (1800 MB) with the large model parked and its work waiting.",
     "seat_roots": [
       "/home/USER/seats"
     ],
@@ -60,7 +60,7 @@
     "limits": {
       "avail_mb": 650,
       "disk_gb": 3,
-      "max_chats": 1
+      "max_chats": 3
     },
     "mirror_dir": "~/.local/share/kimera/mirror/kirpi/claude/projects",
     "modes": [
