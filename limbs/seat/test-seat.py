@@ -263,6 +263,7 @@ check('pull refuses a step upward', call(f'pull {built} ../a.txt')[0] == 4 and c
 check('pull refuses a folder', call(f'pull {built} target/release')[0] == 2)
 check('pull refuses a missing file', call(f'pull {built} target/release/nope')[0] == 2)
 check('pull refuses a folder outside the roots', call('pull /etc passwd')[0] == 2)
+check('a chat cannot be started in a seat root itself, above every seat', call(f'start aiden-rootchat01 {root} 8c663a13-d252-46e6-a541-1cfa02f0bfd4')[0] == 2)
 S.MAX_PULL = 10
 check('pull refuses a file over the limit', call(f'pull {built} target/release/prog')[0] == 2)
 S.MAX_PULL = 64 << 20

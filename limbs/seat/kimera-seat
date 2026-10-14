@@ -185,12 +185,12 @@ def admission(c, avail_mb=None):
     return None
 
 
-def under_root(c, cwd):
+def under_root(c, cwd, itself=False):
     if not PATH_RE.fullmatch(cwd) or '..' in cwd.split('/'):
         raise Bad('CWD must be an absolute path of a-z, 0-9, _ . / -')
     for root in c['seat_roots']:
         root = os.path.realpath(root)
-        if cwd == root or cwd.startswith(root + '/'):
+        if cwd.startswith(root + '/') or (itself and cwd == root):  # a chat or a seed never in the root itself, above every seat
             return
     raise Refused('that folder is not under this device\'s seat roots')
 
@@ -522,7 +522,7 @@ def pull(args):
         raise Refused(c.get('why_not', 'this device does not take chats'))
     # a finished program may also lie in a build folder the device row names (`pull_roots`), not only in a seat folder
     where = dict(c, seat_roots=list(c['seat_roots']) + list(c.get('pull_roots', [])))
-    under_root(where, args[0])
+    under_root(where, args[0], itself=True)
     if not REL_RE.fullmatch(args[1]) or len(args[1]) > 400:
         raise Bad('FILE must be a path inside the folder, of a-z, 0-9, _ . - and /, with no step upward')
     # From the root down to the file, every step is opened inside the handle of the one before and never through a
@@ -982,8 +982,18 @@ def facts(name):
     c = conf()
     sess = None
     p = os.path.join(c['config_dir'], 'sessions', pid + '.json')
+    # The chat's own user can write this file, so it is taken as a claim, not as fact: a plain file read once and
+    # bounded, and only its simple values, shortened and made plain, are passed on.
     try:
-        sess = json.load(open(p))
+        fd = os.open(p, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            raw = os.read(fd, (64 << 10) + 1) if stat.S_ISREG(os.fstat(fd).st_mode) else b''
+        finally:
+            os.close(fd)
+        got = json.loads(raw) if 0 < len(raw) <= 64 << 10 else None
+        if isinstance(got, dict):
+            sess = {plain(str(k), 40): (plain(v, 300) if isinstance(v, str) else v) for k, v in list(got.items())[:40]
+                    if isinstance(v, (str, int, float, bool)) or v is None}
     except (OSError, ValueError):
         pass
     try:
