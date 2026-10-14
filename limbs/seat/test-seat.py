@@ -386,7 +386,7 @@ check('a start file too large to read at once refuses the start', rcw == 2 and '
 os.unlink(tmp + '/.profile')
 os.environ['BASH_ENV'] = '/tmp/x'; S.sessions = lambda: []; open(rec, 'w').close()
 rcw, _ = call(f'start aiden-memw00007 {root}/mw7 {sid3}')
-check('with BASH_ENV set the start is refused', rcw == 2 and 'BASH_ENV' in _)
+check('BASH_ENV and ENV are taken out on the chat\'s own command line, whatever this program\'s environment says', rcw == 0 and ' env -u BASH_ENV -u ENV PATH=' in open(rec).read())
 del os.environ['BASH_ENV']
 open(tmp + '/.bashrc', 'w').write('alias kimera-memory=id\n'); json.dump(cfg, open(seatdir + '/seat.json', 'w')); S.sessions = lambda: []; open(rec, 'w').close()
 rcw, _ = call(f'start aiden-memw00008 {root}/mw8 {sid3} plan sonnet')

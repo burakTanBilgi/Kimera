@@ -753,9 +753,6 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
     # them after the look (the same-user line; a seat user of its own is the wall). A file that is no plain file, too
     # large to read at once or unreadable refuses too, so a pipe or a huge file can neither hang the seat nor pass.
     if c.get('memory_port'):
-        for v in ('BASH_ENV', 'ENV'):  # a file the shell would read first, from anywhere
-            if os.environ.get(v):
-                raise Refused('%s is set here, so the shell reads a file nobody looked at; unset it before a chat starts' % v)
         for rc in ('.bashrc', '.bash_profile', '.bash_login', '.bash_aliases', '.bash_logout', '.profile', '.inputrc',
                    '.zshrc', '.zshenv', '.zprofile', '.zlogin', '.kshrc', '.mkshrc', '.config/fish/config.fish'):
             f, why = os.path.join(HOME, rc), None
@@ -783,6 +780,11 @@ def start_chat(c, verb, name, cwd, sid, mode, model, tools, box_mb, w):
         c = dict(c, memory_port=None)
     if extra or dirs != base.split(':'):
         cmd = ['env', 'PATH=%s' % ':'.join(dirs)] + cmd
+    if c.get('memory_port'):
+        # BASH_ENV and ENV name a file the shell reads first, from anywhere. They are taken out on the chat's own
+        # command line: the chat starts under tmux, whose server has its own environment, so looking at this
+        # program's environment would say nothing about the chat's.
+        cmd = ['env', '-u', 'BASH_ENV', '-u', 'ENV'] + (cmd[1:] if cmd[0] == 'env' else cmd)
     about = card(c, bool(w) or not (c.get('tools_force') or c.get('working')), box_mb or 0, (w or {}).get('hold_minutes', 120))
     if about:
         cmd += ['--append-system-prompt', about]
